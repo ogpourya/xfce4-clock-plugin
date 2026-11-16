@@ -24,7 +24,9 @@ typedef struct {
     GtkWidget *entry_tooltip;
 
     /* Tab 2: Style */
-    GtkWidget *combo_style;
+    GtkWidget *combo_time_style;
+    GtkWidget *combo_date_style;
+    GtkWidget *combo_sep_style;
     GtkWidget *lbl_fuzzy;
     GtkWidget *combo_fuzzy;
     GtkWidget *spin_time_size;
@@ -87,27 +89,42 @@ static gchar *get_color_btn_hex(GtkColorButton *btn) {
         rgba.alpha);
 }
 
+static gboolean style_uses_text_format(StylePreset st) {
+    return st != STYLE_FUZZY && st != STYLE_ROMAN;
+}
+
+static gboolean date_style_uses_text_format(StylePreset st) {
+    return st != STYLE_FUZZY && st != STYLE_ROMAN && st != STYLE_BINARY && st != STYLE_MORSE;
+}
+
+static gboolean style_supports_bold(StylePreset st) {
+    return !clock_style_uses_canvas(st) && !clock_style_uses_tiles(st);
+}
+
 static void refresh_sensitivity_and_previews(PrefsUI *ui) {
     ClockPlugin *c = ui->c;
     gboolean has_t = clock_has_time(c->layout);
     gboolean has_d = clock_has_date(c->layout);
-    gboolean is_fuzzy = (c->style == STYLE_FUZZY);
-    gboolean is_text_time = (c->style == STYLE_DIGITAL || c->style == STYLE_FUZZY);
+    gboolean is_in = clock_is_inline(c->layout);
+    gboolean any_fuzzy = (has_t && c->time_style == STYLE_FUZZY) || (has_d && c->date_style == STYLE_FUZZY);
 
-    gtk_widget_set_sensitive(ui->entry_sep, clock_is_inline(c->layout));
-    gtk_widget_set_sensitive(ui->entry_time_fmt, has_t && !is_fuzzy);
-    gtk_widget_set_sensitive(ui->combo_time_preset, has_t && !is_fuzzy);
+    gtk_widget_set_sensitive(ui->entry_sep, is_in);
+    gtk_widget_set_sensitive(ui->combo_sep_style, is_in);
 
+    gtk_widget_set_sensitive(ui->entry_time_fmt, has_t && style_uses_text_format(c->time_style));
+    gtk_widget_set_sensitive(ui->combo_time_preset, has_t && style_uses_text_format(c->time_style));
+    gtk_widget_set_sensitive(ui->combo_time_style, has_t);
     gtk_widget_set_sensitive(ui->spin_time_size, has_t);
-    gtk_widget_set_sensitive(ui->cb_time_bold, has_t && is_text_time);
+    gtk_widget_set_sensitive(ui->cb_time_bold, has_t && style_supports_bold(c->time_style));
 
-    gtk_widget_set_visible(ui->lbl_fuzzy, is_fuzzy);
-    gtk_widget_set_visible(ui->combo_fuzzy, is_fuzzy);
-
-    gtk_widget_set_sensitive(ui->entry_date_fmt, has_d && !is_fuzzy);
-    gtk_widget_set_sensitive(ui->combo_date_preset, has_d && !is_fuzzy);
+    gtk_widget_set_sensitive(ui->entry_date_fmt, has_d && date_style_uses_text_format(c->date_style));
+    gtk_widget_set_sensitive(ui->combo_date_preset, has_d && date_style_uses_text_format(c->date_style));
+    gtk_widget_set_sensitive(ui->combo_date_style, has_d);
     gtk_widget_set_sensitive(ui->spin_date_size, has_d);
-    gtk_widget_set_sensitive(ui->cb_date_bold, has_d && c->style != STYLE_NIXIE);
+    gtk_widget_set_sensitive(ui->cb_date_bold, has_d && style_supports_bold(c->date_style));
+
+    gtk_widget_set_visible(ui->lbl_fuzzy, any_fuzzy);
+    gtk_widget_set_visible(ui->combo_fuzzy, any_fuzzy);
 
     gtk_widget_set_sensitive(ui->entry_tooltip, c->show_tooltip);
 
@@ -155,7 +172,9 @@ static void sync_widgets_from_config(PrefsUI *ui) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_tooltip), c->show_tooltip);
     gtk_entry_set_text(GTK_ENTRY(ui->entry_tooltip), c->tooltip_format);
 
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_style), c->style);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_time_style), c->time_style);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_date_style), c->date_style);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_sep_style), c->sep_style);
     gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_fuzzy), c->fuzzy_level);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_time_size), c->time_size);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_time_bold), c->time_bold);
@@ -181,7 +200,9 @@ static void on_prefs_changed(GtkWidget *w, gpointer user_data) {
     ClockPlugin *c = ui->c;
 
     c->layout      = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_layout)), 0, LAYOUT_COUNT - 1);
-    c->style       = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_style)), 0, STYLE_COUNT - 1);
+    c->time_style  = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_time_style)), 0, STYLE_COUNT - 1);
+    c->date_style  = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_date_style)), 0, STYLE_COUNT - 1);
+    c->sep_style   = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_sep_style)), 0, STYLE_COUNT - 1);
     c->fuzzy_level = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_fuzzy)), 0, FUZZY_COUNT - 1);
 
     g_free(c->separator);
@@ -287,6 +308,13 @@ static GtkWidget *make_row_label(const char *text) {
     GtkWidget *lbl = gtk_label_new(text);
     gtk_widget_set_halign(lbl, GTK_ALIGN_START);
     return lbl;
+}
+
+static GtkWidget *make_style_combo(void) {
+    GtkWidget *cb = gtk_combo_box_text_new();
+    for (int i = 0; i < STYLE_COUNT; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(cb), STYLE_NAMES[i]);
+    return cb;
 }
 
 static void on_dialog_response(GtkDialog *dlg, gint response_id, gpointer user_data) {
@@ -411,12 +439,20 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     GtkWidget *g2 = new_grid();
     r = 0;
 
-    ui->combo_style = gtk_combo_box_text_new();
-    for (int i = 0; i < STYLE_COUNT; i++)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_style), STYLE_NAMES[i]);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Visual style:"), 0, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->combo_style, 1, r++, 2, 1);
-    g_signal_connect(ui->combo_style, "changed", G_CALLBACK(on_prefs_changed), ui);
+    ui->combo_time_style = make_style_combo();
+    gtk_grid_attach(GTK_GRID(g2), make_row_label("Time style:"), 0, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->combo_time_style, 1, r++, 2, 1);
+    g_signal_connect(ui->combo_time_style, "changed", G_CALLBACK(on_prefs_changed), ui);
+
+    ui->combo_date_style = make_style_combo();
+    gtk_grid_attach(GTK_GRID(g2), make_row_label("Date style:"), 0, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->combo_date_style, 1, r++, 2, 1);
+    g_signal_connect(ui->combo_date_style, "changed", G_CALLBACK(on_prefs_changed), ui);
+
+    ui->combo_sep_style = make_style_combo();
+    gtk_grid_attach(GTK_GRID(g2), make_row_label("Separator style:"), 0, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->combo_sep_style, 1, r++, 2, 1);
+    g_signal_connect(ui->combo_sep_style, "changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->lbl_fuzzy = make_row_label("Fuzzy precision:");
     ui->combo_fuzzy = gtk_combo_box_text_new();

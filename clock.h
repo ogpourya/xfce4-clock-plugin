@@ -22,6 +22,11 @@ typedef enum {
     STYLE_ANALOG,
     STYLE_BINARY,
     STYLE_NIXIE,
+    STYLE_DOTMATRIX,
+    STYLE_FLIP,
+    STYLE_MORSE,
+    STYLE_ROMAN,
+    STYLE_NEON,
     STYLE_COUNT
 } StylePreset;
 
@@ -42,7 +47,9 @@ typedef struct {
 
     /* Configuration */
     LayoutMode   layout;
-    StylePreset  style;
+    StylePreset  time_style;
+    StylePreset  date_style;
+    StylePreset  sep_style;
     FuzzyLevel   fuzzy_level;
     gchar       *timezone_id;     /* empty = local system timezone */
     gchar       *time_format;     /* strftime format */
@@ -72,8 +79,9 @@ typedef struct {
     GtkWidget   *root_box;
     GtkWidget   *time_label;
     GtkWidget   *time_area;
-    GtkWidget   *nixie_box;
+    GtkWidget   *time_tiles;
     GtkWidget   *date_label;
+    GtkWidget   *date_tiles;
     GtkWidget   *sep_label;
 
     guint        timer_id;
@@ -96,6 +104,7 @@ gboolean clock_has_date(LayoutMode mode);
 gboolean clock_is_stacked(LayoutMode mode);
 gboolean clock_is_inline(LayoutMode mode);
 gboolean clock_style_uses_canvas(StylePreset style);
+gboolean clock_style_uses_tiles(StylePreset style);
 void     clock_apply_css(ClockPlugin *c);
 void     clock_rebuild_ui(ClockPlugin *c);
 void     clock_update_now(ClockPlugin *c);

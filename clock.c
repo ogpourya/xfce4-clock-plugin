@@ -18,12 +18,17 @@ const char *const LAYOUT_NAMES[LAYOUT_COUNT] = {
 };
 
 const char *const STYLE_NAMES[STYLE_COUNT] = {
-    [STYLE_DIGITAL] = "Digital",
-    [STYLE_LCD]     = "LCD (7-Segment)",
-    [STYLE_FUZZY]   = "Fuzzy",
-    [STYLE_ANALOG]  = "Analog",
-    [STYLE_BINARY]  = "Binary (BCD)",
-    [STYLE_NIXIE]   = "Nixie Tube",
+    [STYLE_DIGITAL]   = "Digital",
+    [STYLE_LCD]       = "LCD (7-Segment)",
+    [STYLE_FUZZY]     = "Fuzzy",
+    [STYLE_ANALOG]    = "Analog",
+    [STYLE_BINARY]    = "Binary (BCD)",
+    [STYLE_NIXIE]     = "Nixie Tube",
+    [STYLE_DOTMATRIX] = "Dot Matrix (LED)",
+    [STYLE_FLIP]      = "Flip Clock",
+    [STYLE_MORSE]     = "Morse Code",
+    [STYLE_ROMAN]     = "Roman Numerals",
+    [STYLE_NEON]      = "Neon Glow",
 };
 
 const char *const FUZZY_NAMES[FUZZY_COUNT] = {
@@ -37,11 +42,18 @@ static const char *const BUILTIN_CLOCK_SVG =
     "<path fill='#2e3436' d='M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.6a5.4 5.4 0 1 1 0 10.8A5.4 5.4 0 0 1 8 2.6zM7.2 4v4.4l3.3 2 .8-1.3-2.5-1.5V4H7.2z'/>"
     "</svg>";
 
-gboolean clock_has_time(LayoutMode mode)         { return mode != LAYOUT_DATE_ONLY; }
-gboolean clock_has_date(LayoutMode mode)         { return mode != LAYOUT_TIME_ONLY; }
-gboolean clock_is_stacked(LayoutMode mode)       { return mode == LAYOUT_STACK_TIME_DATE || mode == LAYOUT_STACK_DATE_TIME; }
-gboolean clock_is_inline(LayoutMode mode)        { return mode == LAYOUT_INLINE_TIME_DATE || mode == LAYOUT_INLINE_DATE_TIME; }
-gboolean clock_style_uses_canvas(StylePreset st) { return st == STYLE_LCD || st == STYLE_ANALOG || st == STYLE_BINARY; }
+gboolean clock_has_time(LayoutMode mode)   { return mode != LAYOUT_DATE_ONLY; }
+gboolean clock_has_date(LayoutMode mode)   { return mode != LAYOUT_TIME_ONLY; }
+gboolean clock_is_stacked(LayoutMode mode) { return mode == LAYOUT_STACK_TIME_DATE || mode == LAYOUT_STACK_DATE_TIME; }
+gboolean clock_is_inline(LayoutMode mode)  { return mode == LAYOUT_INLINE_TIME_DATE || mode == LAYOUT_INLINE_DATE_TIME; }
+
+gboolean clock_style_uses_canvas(StylePreset st) {
+    return st == STYLE_LCD || st == STYLE_ANALOG || st == STYLE_BINARY || st == STYLE_DOTMATRIX || st == STYLE_MORSE;
+}
+
+gboolean clock_style_uses_tiles(StylePreset st) {
+    return st == STYLE_NIXIE || st == STYLE_FLIP;
+}
 
 static gboolean format_has_seconds(const char *fmt) {
     return fmt && (strstr(fmt, "%S") != NULL || strstr(fmt, "%T") != NULL || strstr(fmt, "%r") != NULL || strstr(fmt, "%X") != NULL);
@@ -77,6 +89,8 @@ gchar *clock_format_preview(ClockPlugin *c, const char *fmt) {
     gchar *out = g_date_time_format(now, fmt);
     return out ? out : g_strdup("(invalid format)");
 }
+
+/* ==================== Text Formatters (Fuzzy, Roman, Binary, Morse) ==================== */
 
 static void format_fuzzy_time(GDateTime *now, FuzzyLevel level, char *out, size_t len) {
     int h = g_date_time_get_hour(now);
@@ -120,7 +134,6 @@ static void format_fuzzy_time(GDateTime *now, FuzzyLevel level, char *out, size_
         return;
     }
 
-    /* FUZZY_5MIN */
     int bucket = (m + 2) / 5;
     int disp_h = (bucket >= 7) ? ((h + 1) % 24) : h;
     const char *hword = (disp_h == 0) ? "midnight" : (disp_h == 12) ? "noon" : HOURS[disp_h % 12];
@@ -167,11 +180,88 @@ static void format_fuzzy_date(GDateTime *now, FuzzyLevel level, char *out, size_
         g_snprintf(out, len, "%s the %d%s of %s", weekday ? weekday : "", day, suf, month ? month : "");
 }
 
+static void int_to_roman(int val, char *out, size_t len) {
+    if (val <= 0) {
+        g_strlcpy(out, "N", len);
+        return;
+    }
+    static const struct { int v; const char *s; } SYMS[] = {
+        {1000, "M"}, {900, "CM"}, {500, "D"}, {400, "CD"},
+        {100,  "C"}, {90,  "XC"}, {50,  "L"}, {40,  "XL"},
+        {10,   "X"}, {9,   "IX"}, {5,   "V"}, {4,   "IV"}, {1, "I"}
+    };
+    out[0] = '\0';
+    for (size_t i = 0; i < G_N_ELEMENTS(SYMS); i++) {
+        while (val >= SYMS[i].v) {
+            g_strlcat(out, SYMS[i].s, len);
+            val -= SYMS[i].v;
+        }
+    }
+}
+
+static void format_roman_time(ClockPlugin *c, GDateTime *now, char *out, size_t len) {
+    gboolean show_sec = format_has_seconds(c->time_format);
+    gboolean is_12h   = format_is_12h(c->time_format);
+    int h = g_date_time_get_hour(now);
+    int m = g_date_time_get_minute(now);
+    int s = g_date_time_get_second(now);
+    const char *ampm = "";
+    if (is_12h) {
+        ampm = (h >= 12) ? " PM" : " AM";
+        h = h % 12;
+        if (h == 0) h = 12;
+    }
+    char rh[16], rm[16], rs[16];
+    int_to_roman(h, rh, sizeof(rh));
+    int_to_roman(m, rm, sizeof(rm));
+    if (show_sec) {
+        int_to_roman(s, rs, sizeof(rs));
+        g_snprintf(out, len, "%s:%s:%s%s", rh, rm, rs, ampm);
+    } else {
+        g_snprintf(out, len, "%s:%s%s", rh, rm, ampm);
+    }
+}
+
+static void format_roman_date(GDateTime *now, char *out, size_t len) {
+    char rd[16], rm[16], ry[24];
+    int_to_roman(g_date_time_get_day_of_month(now), rd, sizeof(rd));
+    int_to_roman(g_date_time_get_month(now), rm, sizeof(rm));
+    int_to_roman(g_date_time_get_year(now), ry, sizeof(ry));
+    g_snprintf(out, len, "%s · %s · %s", rd, rm, ry);
+}
+
+static void format_binary_date(GDateTime *now, char *out, size_t len) {
+    int m = g_date_time_get_month(now);
+    int d = g_date_time_get_day_of_month(now);
+    char bm[8], bd[8];
+    for (int i = 3; i >= 0; i--) bm[3 - i] = ((m >> i) & 1) ? '1' : '0';
+    bm[4] = '\0';
+    for (int i = 4; i >= 0; i--) bd[4 - i] = ((d >> i) & 1) ? '1' : '0';
+    bd[5] = '\0';
+    g_snprintf(out, len, "%s·%s", bm, bd);
+}
+
+static void format_morse_date(GDateTime *now, char *out, size_t len) {
+    static const char *const MORSE_DIGITS[10] = {
+        "-----", ".----", "..---", "...--", "....-",
+        ".....", "-....", "--...", "---..", "----."
+    };
+    int m = g_date_time_get_month(now);
+    int d = g_date_time_get_day_of_month(now);
+    g_snprintf(out, len, "%s %s / %s %s",
+        MORSE_DIGITS[m / 10], MORSE_DIGITS[m % 10],
+        MORSE_DIGITS[d / 10], MORSE_DIGITS[d % 10]);
+}
+
 static void get_time_fg_rgba(ClockPlugin *c, GdkRGBA *out) {
     if (c->time_color && *c->time_color && gdk_rgba_parse(out, c->time_color))
         return;
-    if (c->style == STYLE_NIXIE) {
+    if (c->time_style == STYLE_NIXIE) {
         gdk_rgba_parse(out, "#ff7b1c");
+        return;
+    }
+    if (c->time_style == STYLE_NEON) {
+        gdk_rgba_parse(out, "#00f0ff");
         return;
     }
     gtk_style_context_get_color(gtk_widget_get_style_context(c->root_box), GTK_STATE_FLAG_NORMAL, out);
@@ -188,7 +278,7 @@ static void get_accent_rgba(ClockPlugin *c, const GdkRGBA *fg, GdkRGBA *out) {
     out->blue  = MAX(0.1, out->blue * 0.5);
 }
 
-/* ==================== 7-Segment LCD Renderer ==================== */
+/* ==================== Cairo Renderers: LCD, Analog, Binary, Dot Matrix, Morse ==================== */
 
 static void draw_7seg_digit(cairo_t *cr, double x, double y, double w, double h, int digit, const GdkRGBA *fg) {
     static const unsigned char MASKS[11] = {
@@ -283,7 +373,7 @@ static void draw_lcd_clock(ClockPlugin *c, cairo_t *cr, int width, int height, G
     digits[4] = s / 10;
     digits[5] = s % 10;
 
-    double pad = 2.0;
+    double pad = 1.0;
     double dh = MAX(10.0, height - pad * 2.0);
     double dw = dh * 0.56;
     double dgap = MAX(2.0, dw * 0.22);
@@ -311,8 +401,6 @@ static void draw_lcd_clock(ClockPlugin *c, cairo_t *cr, int width, int height, G
         }
     }
 }
-
-/* ==================== Analog Watch Renderer ==================== */
 
 static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height, GDateTime *now) {
     GdkRGBA fg, accent;
@@ -379,8 +467,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     cairo_fill(cr);
 }
 
-/* ==================== Binary (BCD) Matrix Renderer ==================== */
-
 static void draw_binary_clock(ClockPlugin *c, cairo_t *cr, int width, int height, GDateTime *now) {
     GdkRGBA fg;
     get_time_fg_rgba(c, &fg);
@@ -399,7 +485,7 @@ static void draw_binary_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     int vals[6]     = { h / 10, h % 10, m / 10, m % 10, s / 10, s % 10 };
     int max_bits[6] = { is_12h ? 1 : 2, 4, 3, 4, 3, 4 };
 
-    double pad = 2.0;
+    double pad = 1.0;
     double usable_h = MAX(10.0, height - pad * 2.0);
     double cell = usable_h / 4.0;
     double r = MAX(1.3, cell * 0.36);
@@ -426,6 +512,119 @@ static void draw_binary_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     }
 }
 
+static void draw_dotmatrix_clock(ClockPlugin *c, cairo_t *cr, int width, int height, GDateTime *now) {
+    /* 5x7 LED font for digits 0-9 (5 bits wide per row, MSB = left) */
+    static const unsigned char FONT5X7[10][7] = {
+        {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, /* 0 */
+        {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}, /* 1 */
+        {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, /* 2 */
+        {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}, /* 3 */
+        {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, /* 4 */
+        {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}, /* 5 */
+        {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, /* 6 */
+        {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}, /* 7 */
+        {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, /* 8 */
+        {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}, /* 9 */
+    };
+
+    GdkRGBA fg;
+    get_time_fg_rgba(c, &fg);
+
+    gboolean show_sec = format_has_seconds(c->time_format);
+    gboolean is_12h   = format_is_12h(c->time_format);
+    int h = g_date_time_get_hour(now);
+    int m = g_date_time_get_minute(now);
+    int s = g_date_time_get_second(now);
+    if (is_12h) {
+        h = h % 12;
+        if (h == 0) h = 12;
+    }
+
+    int digits[6] = { h / 10, h % 10, m / 10, m % 10, s / 10, s % 10 };
+    int n_groups = show_sec ? 3 : 2;
+    int total_cols = n_groups * 11 + (n_groups - 1) * 3;
+
+    double pad = 1.0;
+    double step = MIN((height - pad * 2.0) / 7.0, (width - pad * 2.0) / (double)total_cols);
+    double r = MAX(0.75, step * 0.36);
+    double x0 = (width - total_cols * step) * 0.5;
+    double y0 = (height - 7.0 * step) * 0.5;
+
+    int col = 0;
+    for (int g = 0; g < n_groups; g++) {
+        for (int d = 0; d < 2; d++) {
+            int val = digits[g * 2 + d];
+            gboolean blank = (g == 0 && d == 0 && is_12h && h < 10);
+            for (int row = 0; row < 7; row++) {
+                for (int bit = 0; bit < 5; bit++) {
+                    gboolean on = !blank && ((FONT5X7[val][row] >> (4 - bit)) & 1);
+                    cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, on ? 0.96 : 0.12);
+                    cairo_arc(cr, x0 + (col + bit + 0.5) * step, y0 + (row + 0.5) * step, r, 0, 2.0 * M_PI);
+                    cairo_fill(cr);
+                }
+            }
+            col += (d == 0) ? 6 : 5;
+        }
+        if (g < n_groups - 1) {
+            for (int row = 0; row < 7; row++) {
+                gboolean on = (row == 2 || row == 4);
+                cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, on ? 0.92 : 0.08);
+                cairo_arc(cr, x0 + (col + 1.5) * step, y0 + (row + 0.5) * step, r, 0, 2.0 * M_PI);
+                cairo_fill(cr);
+            }
+            col += 3;
+        }
+    }
+}
+
+static void draw_morse_clock(ClockPlugin *c, cairo_t *cr, int width, int height, GDateTime *now) {
+    static const char *const MORSE[10] = {
+        "-----", ".----", "..---", "...--", "....-",
+        ".....", "-....", "--...", "---..", "----."
+    };
+
+    GdkRGBA fg;
+    get_time_fg_rgba(c, &fg);
+
+    gboolean is_12h = format_is_12h(c->time_format);
+    int h = g_date_time_get_hour(now);
+    int m = g_date_time_get_minute(now);
+    if (is_12h) {
+        h = h % 12;
+        if (h == 0) h = 12;
+    }
+
+    int digits[4] = { h / 10, h % 10, m / 10, m % 10 };
+    double pad = 2.0;
+    double row_h = (height - pad * 2.0) / 2.0;
+    double u = MIN((width - pad * 2.0) / 36.0, row_h * 0.42);
+    double r = MAX(1.1, u * 0.42);
+
+    for (int row = 0; row < 2; row++) {
+        double cy = pad + (row + 0.5) * row_h;
+        double cx = pad + 1.0;
+        for (int d = 0; d < 2; d++) {
+            const char *code = MORSE[digits[row * 2 + d]];
+            for (int i = 0; i < 5; i++) {
+                if (code[i] == '.') {
+                    cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, 0.96);
+                    cairo_arc(cr, cx + r, cy, r, 0, 2.0 * M_PI);
+                    cairo_fill(cr);
+                    cx += r * 2.0 + u * 0.65;
+                } else {
+                    double dash_w = r * 4.4;
+                    double dash_h = r * 1.75;
+                    cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, 0.88);
+                    cairo_rectangle(cr, cx, cy - dash_h * 0.5, dash_w, dash_h);
+                    cairo_fill(cr);
+                    cx += dash_w + u * 0.65;
+                }
+            }
+            cx += u * 1.8;
+        }
+    }
+}
+
 static gboolean on_canvas_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
     ClockPlugin *c = user_data;
     int w = gtk_widget_get_allocated_width(widget);
@@ -433,11 +632,13 @@ static gboolean on_canvas_draw(GtkWidget *widget, cairo_t *cr, gpointer user_dat
     g_autoptr(GDateTime) now = g_date_time_new_now(c->tz);
     if (!now) return FALSE;
 
-    switch (c->style) {
-        case STYLE_LCD:    draw_lcd_clock(c, cr, w, h, now); break;
-        case STYLE_ANALOG: draw_analog_clock(c, cr, w, h, now); break;
-        case STYLE_BINARY: draw_binary_clock(c, cr, w, h, now); break;
-        default:           break;
+    switch (c->time_style) {
+        case STYLE_LCD:       draw_lcd_clock(c, cr, w, h, now); break;
+        case STYLE_ANALOG:    draw_analog_clock(c, cr, w, h, now); break;
+        case STYLE_BINARY:    draw_binary_clock(c, cr, w, h, now); break;
+        case STYLE_DOTMATRIX: draw_dotmatrix_clock(c, cr, w, h, now); break;
+        case STYLE_MORSE:     draw_morse_clock(c, cr, w, h, now); break;
+        default:              break;
     }
     return FALSE;
 }
@@ -457,7 +658,9 @@ void clock_set_defaults(ClockPlugin *c) {
     g_free(c->accent_color);
 
     c->layout            = LAYOUT_STACK_TIME_DATE;
-    c->style             = STYLE_DIGITAL;
+    c->time_style        = STYLE_DIGITAL;
+    c->date_style        = STYLE_DIGITAL;
+    c->sep_style         = STYLE_DIGITAL;
     c->fuzzy_level       = FUZZY_5MIN;
     c->timezone_id       = g_strdup("");
     c->time_format       = g_strdup("%H:%M");
@@ -488,9 +691,12 @@ static void load_config(ClockPlugin *c) {
     XfceRc *rc = xfce_rc_simple_open(file, TRUE);
     if (!rc) return;
 
-    c->layout            = CLAMP(xfce_rc_read_int_entry(rc, "layout", LAYOUT_STACK_TIME_DATE), 0, LAYOUT_COUNT - 1);
-    c->style             = CLAMP(xfce_rc_read_int_entry(rc, "style", STYLE_DIGITAL), 0, STYLE_COUNT - 1);
-    c->fuzzy_level       = CLAMP(xfce_rc_read_int_entry(rc, "fuzzy_level", FUZZY_5MIN), 0, FUZZY_COUNT - 1);
+    int legacy_style = CLAMP(xfce_rc_read_int_entry(rc, "style", STYLE_DIGITAL), 0, STYLE_COUNT - 1);
+    c->layout        = CLAMP(xfce_rc_read_int_entry(rc, "layout", LAYOUT_STACK_TIME_DATE), 0, LAYOUT_COUNT - 1);
+    c->time_style    = CLAMP(xfce_rc_read_int_entry(rc, "time_style", legacy_style), 0, STYLE_COUNT - 1);
+    c->date_style    = CLAMP(xfce_rc_read_int_entry(rc, "date_style", legacy_style), 0, STYLE_COUNT - 1);
+    c->sep_style     = CLAMP(xfce_rc_read_int_entry(rc, "sep_style", legacy_style), 0, STYLE_COUNT - 1);
+    c->fuzzy_level   = CLAMP(xfce_rc_read_int_entry(rc, "fuzzy_level", FUZZY_5MIN), 0, FUZZY_COUNT - 1);
 
     g_free(c->timezone_id);    c->timezone_id    = g_strdup(xfce_rc_read_entry(rc, "timezone_id", ""));
     g_free(c->time_format);    c->time_format    = g_strdup(xfce_rc_read_entry(rc, "time_format", "%H:%M"));
@@ -522,7 +728,9 @@ static void save_config_now(ClockPlugin *c) {
     if (!rc) return;
 
     xfce_rc_write_int_entry(rc, "layout", c->layout);
-    xfce_rc_write_int_entry(rc, "style", c->style);
+    xfce_rc_write_int_entry(rc, "time_style", c->time_style);
+    xfce_rc_write_int_entry(rc, "date_style", c->date_style);
+    xfce_rc_write_int_entry(rc, "sep_style", c->sep_style);
     xfce_rc_write_int_entry(rc, "fuzzy_level", c->fuzzy_level);
     xfce_rc_write_entry(rc, "timezone_id", c->timezone_id ? c->timezone_id : "");
     xfce_rc_write_entry(rc, "time_format", c->time_format ? c->time_format : "");
@@ -577,7 +785,108 @@ void clock_flush_save(ClockPlugin *c) {
     }
 }
 
-/* ==================== CSS & UI Construction ==================== */
+/* ==================== CSS & Per-Element Styling ==================== */
+
+static void append_element_style_css(GString *s, const char *cls, StylePreset st,
+                                     int size, gboolean bold, const char *color_override,
+                                     double default_opacity) {
+    const char *nixie_fg = (color_override && *color_override) ? color_override : "#ff7b1c";
+    const char *neon_fg  = (color_override && *color_override) ? color_override : "#00f0ff";
+
+    g_string_append_printf(s, ".%s { font-size: %dpx; font-weight: %s; line-height: 1.05; ",
+        cls, size, bold ? "bold" : "normal");
+
+    switch (st) {
+        case STYLE_LCD:
+            g_string_append(s, "font-family: monospace; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; ");
+            if (color_override && *color_override)
+                g_string_append_printf(s, "color: %s; ", color_override);
+            else
+                g_string_append_printf(s, "opacity: %.2f; ", default_opacity);
+            break;
+        case STYLE_FUZZY:
+            g_string_append(s, "font-style: italic; ");
+            if (color_override && *color_override)
+                g_string_append_printf(s, "color: %s; ", color_override);
+            else
+                g_string_append_printf(s, "opacity: %.2f; ", default_opacity);
+            break;
+        case STYLE_ANALOG:
+        case STYLE_ROMAN:
+            g_string_append(s, "font-family: serif; letter-spacing: 0.06em; ");
+            if (color_override && *color_override)
+                g_string_append_printf(s, "color: %s; ", color_override);
+            else
+                g_string_append_printf(s, "opacity: %.2f; ", default_opacity);
+            break;
+        case STYLE_BINARY:
+        case STYLE_DOTMATRIX:
+        case STYLE_MORSE:
+            g_string_append(s, "font-family: monospace; letter-spacing: 0.05em; font-variant-numeric: tabular-nums; ");
+            if (color_override && *color_override)
+                g_string_append_printf(s, "color: %s; ", color_override);
+            else
+                g_string_append_printf(s, "opacity: %.2f; ", default_opacity);
+            break;
+        case STYLE_NIXIE:
+            g_string_append_printf(s, "font-family: monospace; letter-spacing: 0.05em; color: %s; text-shadow: 0 0 6px %s; ",
+                nixie_fg, nixie_fg);
+            break;
+        case STYLE_NEON:
+            g_string_append_printf(s, "font-family: monospace; letter-spacing: 0.04em; color: %s; text-shadow: 0 0 4px %s, 0 0 10px %s; ",
+                neon_fg, neon_fg, neon_fg);
+            break;
+        case STYLE_FLIP:
+            g_string_append(s,
+                "font-family: monospace; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; "
+                "background-image: linear-gradient(to bottom, rgba(42,45,50,0.94) 0%, rgba(32,35,40,0.94) 48%, "
+                "rgba(12,14,16,0.98) 50%, rgba(26,29,34,0.94) 52%, rgba(36,39,44,0.94) 100%); "
+                "border: 1px solid rgba(255,255,255,0.16); border-radius: 3px; padding: 1px 4px; ");
+            if (color_override && *color_override)
+                g_string_append_printf(s, "color: %s; ", color_override);
+            else
+                g_string_append(s, "color: #f2f4f8; ");
+            break;
+        case STYLE_DIGITAL:
+        default:
+            g_string_append(s, "font-variant-numeric: tabular-nums; ");
+            if (color_override && *color_override)
+                g_string_append_printf(s, "color: %s; ", color_override);
+            else
+                g_string_append_printf(s, "opacity: %.2f; ", default_opacity);
+            break;
+    }
+    g_string_append(s, "}\n");
+}
+
+static void append_tile_css(GString *s, const char *prefix, StylePreset st, int size, const char *color_override) {
+    const char *nixie_fg = (color_override && *color_override) ? color_override : "#ff7b1c";
+
+    if (st == STYLE_NIXIE) {
+        g_string_append_printf(s,
+            ".%s-tile { font-family: monospace; font-size: %dpx; font-weight: bold; "
+            "color: %s; background-color: rgba(24, 15, 8, 0.92); "
+            "border: 1px solid alpha(%s, 0.45); border-radius: 4px; "
+            "padding: 1px 4px; text-shadow: 0 0 6px %s; line-height: 1.0; }\n"
+            ".%s-sep { font-family: monospace; font-size: %dpx; font-weight: bold; "
+            "color: %s; text-shadow: 0 0 5px %s; padding: 0 1px; line-height: 1.0; }\n",
+            prefix, size, nixie_fg, nixie_fg, nixie_fg,
+            prefix, size, nixie_fg, nixie_fg);
+    } else if (st == STYLE_FLIP) {
+        const char *fg = (color_override && *color_override) ? color_override : "#f2f4f8";
+        g_string_append_printf(s,
+            ".%s-tile { font-family: monospace; font-size: %dpx; font-weight: bold; "
+            "color: %s; "
+            "background-image: linear-gradient(to bottom, rgba(44,47,53,0.96) 0%%, rgba(34,37,42,0.96) 48%%, "
+            "rgba(10,12,14,0.98) 50%%, rgba(28,31,36,0.96) 52%%, rgba(38,41,47,0.96) 100%%); "
+            "border: 1px solid rgba(255,255,255,0.18); border-radius: 3px; "
+            "padding: 1px 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.35); line-height: 1.0; }\n"
+            ".%s-sep { font-family: monospace; font-size: %dpx; font-weight: bold; "
+            "opacity: 0.80; padding: 0 1px; line-height: 1.0; }\n",
+            prefix, size, fg,
+            prefix, size);
+    }
+}
 
 void clock_apply_css(ClockPlugin *c) {
     if (!c->css) {
@@ -589,165 +898,27 @@ void clock_apply_css(ClockPlugin *c) {
     }
 
     const char *bg = (c->bg_color && *c->bg_color) ? c->bg_color : NULL;
-    const char *nixie_fg = (c->time_color && *c->time_color) ? c->time_color : "#ff7b1c";
-    const char *nixie_date_fg = (c->date_color && *c->date_color) ? c->date_color : nixie_fg;
 
     GString *s = g_string_sized_new(1024);
 
-    /* Outer container styled coherently per visual preset */
-    switch (c->style) {
-        case STYLE_LCD:
-            g_string_append_printf(s,
-                ".xclk-box { padding: 2px 8px; border-radius: 4px; "
-                "background-color: %s; border: 1px solid alpha(currentColor, 0.24); }\n"
-                ".xclk-box:hover { background-color: alpha(currentColor, 0.11); }\n",
-                bg ? bg : "alpha(currentColor, 0.06)");
-            break;
-        case STYLE_NIXIE:
-            g_string_append_printf(s,
-                ".xclk-box { padding: 2px 8px; border-radius: 6px; "
-                "background-color: %s; border: 1px solid alpha(%s, 0.35); }\n"
-                ".xclk-box:hover { border-color: alpha(%s, 0.65); }\n",
-                bg ? bg : "rgba(18, 12, 8, 0.88)", nixie_fg, nixie_fg);
-            break;
-        case STYLE_ANALOG:
-            g_string_append_printf(s,
-                ".xclk-box { padding: 2px 8px; border-radius: 999px; "
-                "background-color: %s; }\n"
-                ".xclk-box:hover { background-color: alpha(currentColor, 0.08); }\n",
-                bg ? bg : "transparent");
-            break;
-        case STYLE_BINARY:
-            g_string_append_printf(s,
-                ".xclk-box { padding: 2px 8px; border-radius: 4px; "
-                "background-color: %s; border: 1px dashed alpha(currentColor, 0.22); }\n"
-                ".xclk-box:hover { background-color: alpha(currentColor, 0.09); }\n",
-                bg ? bg : "alpha(currentColor, 0.04)");
-            break;
-        case STYLE_FUZZY:
-        case STYLE_DIGITAL:
-        default:
-            g_string_append_printf(s,
-                ".xclk-box { padding: 2px 7px; border-radius: 5px; transition: background-color 120ms ease; background-color: %s; }\n"
-                ".xclk-box:hover { background-color: alpha(currentColor, 0.08); }\n",
-                bg ? bg : "transparent");
-            break;
-    }
-
-    /* Time text styling */
+    /* Clean outer container: no forced box border or background unless user explicitly picks Background fill */
     g_string_append_printf(s,
-        ".xclk-time { font-size: %dpx; font-weight: %s; font-variant-numeric: tabular-nums; line-height: 1.05; ",
-        c->time_size, c->time_bold ? "bold" : "normal");
-    if (c->time_color && *c->time_color)
-        g_string_append_printf(s, "color: %s; ", c->time_color);
-    g_string_append(s, "}\n");
+        ".xclk-box { padding: 1px 6px; border-radius: 4px; transition: background-color 120ms ease; background-color: %s; }\n"
+        ".xclk-box:hover { background-color: alpha(currentColor, 0.07); }\n",
+        bg ? bg : "transparent");
 
-    g_string_append_printf(s,
-        ".xclk-fuzzy { font-size: %dpx; font-weight: %s; font-style: italic; line-height: 1.08; ",
-        c->time_size, c->time_bold ? "bold" : "normal");
-    if (c->time_color && *c->time_color)
-        g_string_append_printf(s, "color: %s; ", c->time_color);
-    g_string_append(s, "}\n");
+    append_element_style_css(s, "xclk-time", c->time_style, c->time_size, c->time_bold, c->time_color, 1.00);
+    append_element_style_css(s, "xclk-date", c->date_style, c->date_size, c->date_bold, c->date_color, 0.84);
 
-    g_string_append_printf(s,
-        ".xclk-nixie-digit { font-family: monospace; font-size: %dpx; font-weight: bold; "
-        "color: %s; background-color: rgba(28, 18, 10, 0.92); "
-        "border: 1px solid alpha(%s, 0.42); border-radius: 4px; "
-        "padding: 1px 4px; text-shadow: 0 0 6px %s; line-height: 1.0; }\n"
-        ".xclk-nixie-colon { font-family: monospace; font-size: %dpx; font-weight: bold; "
-        "color: %s; text-shadow: 0 0 5px %s; padding: 0 1px; line-height: 1.0; }\n",
-        c->time_size, nixie_fg, nixie_fg, nixie_fg,
-        c->time_size, nixie_fg, nixie_fg);
+    const char *sep_col = (c->sep_color && *c->sep_color && g_strcmp0(c->sep_color, "#888888") != 0)
+        ? c->sep_color : NULL;
+    append_element_style_css(s, "xclk-sep", c->sep_style, MAX(c->time_size, c->date_size), TRUE,
+        sep_col ? sep_col : ((c->sep_color && *c->sep_color && c->sep_style != STYLE_NIXIE && c->sep_style != STYLE_NEON) ? c->sep_color : NULL),
+        0.72);
+    g_string_append_printf(s, ".xclk-sep { margin: 0 %dpx; }\n", MAX(2, c->spacing + 2));
 
-    /* Date text styling matched to every visual style */
-    g_string_append_printf(s,
-        ".xclk-date { font-size: %dpx; font-weight: %s; font-variant-numeric: tabular-nums; line-height: 1.05; ",
-        c->date_size, c->date_bold ? "bold" : "normal");
-    switch (c->style) {
-        case STYLE_LCD:
-        case STYLE_BINARY:
-            g_string_append(s, "font-family: monospace; letter-spacing: 0.06em; ");
-            if (c->date_color && *c->date_color)
-                g_string_append_printf(s, "color: %s; ", c->date_color);
-            else if (c->time_color && *c->time_color)
-                g_string_append_printf(s, "color: %s; opacity: 0.90; ", c->time_color);
-            else
-                g_string_append(s, "opacity: 0.92; ");
-            break;
-        case STYLE_FUZZY:
-            g_string_append(s, "font-style: italic; ");
-            if (c->date_color && *c->date_color)
-                g_string_append_printf(s, "color: %s; ", c->date_color);
-            else if (c->time_color && *c->time_color)
-                g_string_append_printf(s, "color: %s; opacity: 0.88; ", c->time_color);
-            else
-                g_string_append(s, "opacity: 0.86; ");
-            break;
-        case STYLE_ANALOG:
-            g_string_append(s, "font-family: serif; letter-spacing: 0.04em; ");
-            if (c->date_color && *c->date_color)
-                g_string_append_printf(s, "color: %s; ", c->date_color);
-            else if (c->time_color && *c->time_color)
-                g_string_append_printf(s, "color: %s; opacity: 0.88; ", c->time_color);
-            else
-                g_string_append(s, "opacity: 0.88; ");
-            break;
-        case STYLE_NIXIE:
-            g_string_append_printf(s,
-                "font-family: monospace; letter-spacing: 0.05em; color: %s; text-shadow: 0 0 5px %s; ",
-                nixie_date_fg, nixie_date_fg);
-            break;
-        case STYLE_DIGITAL:
-        default:
-            if (c->date_color && *c->date_color)
-                g_string_append_printf(s, "color: %s; ", c->date_color);
-            else
-                g_string_append(s, "opacity: 0.82; ");
-            break;
-    }
-    g_string_append(s, "}\n");
-
-    /* Separator styling matched to every visual style */
-    g_string_append_printf(s,
-        ".xclk-sep { font-size: %dpx; font-weight: 600; margin: 0 %dpx; ",
-        MAX(c->time_size, c->date_size), MAX(2, c->spacing + 2));
-    switch (c->style) {
-        case STYLE_LCD:
-        case STYLE_BINARY:
-            g_string_append(s, "font-family: monospace; ");
-            if (c->sep_color && *c->sep_color)
-                g_string_append_printf(s, "color: %s; ", c->sep_color);
-            else if (c->time_color && *c->time_color)
-                g_string_append_printf(s, "color: %s; ", c->time_color);
-            break;
-        case STYLE_FUZZY:
-            g_string_append(s, "font-style: italic; ");
-            if (c->sep_color && *c->sep_color)
-                g_string_append_printf(s, "color: %s; ", c->sep_color);
-            else
-                g_string_append(s, "opacity: 0.75; ");
-            break;
-        case STYLE_ANALOG:
-            g_string_append(s, "font-family: serif; ");
-            if (c->sep_color && *c->sep_color)
-                g_string_append_printf(s, "color: %s; ", c->sep_color);
-            else
-                g_string_append(s, "opacity: 0.75; ");
-            break;
-        case STYLE_NIXIE:
-            g_string_append_printf(s, "font-family: monospace; color: %s; text-shadow: 0 0 5px %s; ",
-                (c->sep_color && *c->sep_color && g_strcmp0(c->sep_color, "#888888") != 0) ? c->sep_color : nixie_fg,
-                nixie_fg);
-            break;
-        case STYLE_DIGITAL:
-        default:
-            if (c->sep_color && *c->sep_color)
-                g_string_append_printf(s, "color: %s; ", c->sep_color);
-            else
-                g_string_append(s, "opacity: 0.65; ");
-            break;
-    }
-    g_string_append(s, "}\n");
+    append_tile_css(s, "xclk-tt", c->time_style, c->time_size, c->time_color);
+    append_tile_css(s, "xclk-dt", c->date_style, c->date_size, c->date_color);
 
     g_string_append(s,
         ".xclk-popup-frame { padding: 8px; border: 1px solid alpha(currentColor, 0.22); border-radius: 6px; }\n");
@@ -786,25 +957,74 @@ static GtkWidget *make_label(const char *css_class, gboolean stacked) {
     return lbl;
 }
 
+static void rebuild_tile_strip(GtkWidget *box, const char *prefix, const char *str, gboolean pair_flip) {
+    if (!box) return;
+    GList *children = gtk_container_get_children(GTK_CONTAINER(box));
+    for (GList *l = children; l != NULL; l = l->next)
+        gtk_widget_destroy(GTK_WIDGET(l->data));
+    g_list_free(children);
+
+    g_autofree gchar *tile_cls = g_strdup_printf("%s-tile", prefix);
+    g_autofree gchar *sep_cls  = g_strdup_printf("%s-sep", prefix);
+
+    const char *p = str;
+    while (*p) {
+        if (*p == ' ') {
+            GtkWidget *sp = gtk_label_new(" ");
+            gtk_box_pack_start(GTK_BOX(box), sp, FALSE, FALSE, 1);
+            p++;
+        } else if (*p == ':' || *p == '/' || *p == '-') {
+            char ch[2] = { *p, '\0' };
+            GtkWidget *lbl = gtk_label_new(ch);
+            gtk_style_context_add_class(gtk_widget_get_style_context(lbl), sep_cls);
+            gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+            p++;
+        } else if (pair_flip && g_ascii_isalnum(p[0]) && g_ascii_isalnum(p[1])) {
+            char pair[3] = { p[0], p[1], '\0' };
+            GtkWidget *lbl = gtk_label_new(pair);
+            gtk_style_context_add_class(gtk_widget_get_style_context(lbl), tile_cls);
+            gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+            p += 2;
+        } else {
+            const char *next = g_utf8_next_char(p);
+            g_autofree gchar *ch = g_strndup(p, (gsize)(next - p));
+            GtkWidget *lbl = gtk_label_new(ch);
+            gtk_style_context_add_class(gtk_widget_get_style_context(lbl), tile_cls);
+            gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+            p = next;
+        }
+    }
+    gtk_widget_show_all(box);
+}
+
 static GtkWidget *create_time_widget(ClockPlugin *c, gboolean stacked) {
-    if (clock_style_uses_canvas(c->style)) {
+    if (clock_style_uses_canvas(c->time_style)) {
         GtkWidget *da = gtk_drawing_area_new();
         gboolean show_sec = format_has_seconds(c->time_format);
         int h = MAX(14, c->time_size + 5);
         int w = h;
 
-        if (c->style == STYLE_LCD) {
+        if (c->time_style == STYLE_LCD) {
             int n_digits = show_sec ? 6 : 4;
             int n_colons = show_sec ? 2 : 1;
-            w = (int)((h - 4) * 0.58 * n_digits + (h - 4) * 0.28 * n_colons + 8);
-        } else if (c->style == STYLE_ANALOG) {
+            w = (int)((h - 2) * 0.58 * n_digits + (h - 2) * 0.28 * n_colons + 4);
+        } else if (c->time_style == STYLE_ANALOG) {
             h = MAX(18, c->time_size + 10);
             w = h;
-        } else if (c->style == STYLE_BINARY) {
+        } else if (c->time_style == STYLE_BINARY) {
             int cols = show_sec ? 6 : 4;
-            int cell = MAX(4, (h - 4) / 4);
-            h = cell * 4 + 4;
-            w = cell * cols + (cols / 2 - 1) * (cell / 2) + 4;
+            int cell = MAX(4, (h - 2) / 4);
+            h = cell * 4 + 2;
+            w = cell * cols + (cols / 2 - 1) * (cell / 2) + 2;
+        } else if (c->time_style == STYLE_DOTMATRIX) {
+            int n_groups = show_sec ? 3 : 2;
+            int total_cols = n_groups * 11 + (n_groups - 1) * 3;
+            int step = MAX(2, (h - 2) / 7);
+            h = step * 7 + 2;
+            w = step * total_cols + 2;
+        } else if (c->time_style == STYLE_MORSE) {
+            h = MAX(14, c->time_size + 4);
+            w = MAX(52, h * 3);
         }
 
         gtk_widget_set_size_request(da, w, h);
@@ -816,42 +1036,49 @@ static GtkWidget *create_time_widget(ClockPlugin *c, gboolean stacked) {
         return da;
     }
 
-    if (c->style == STYLE_NIXIE) {
+    if (clock_style_uses_tiles(c->time_style)) {
         GtkWidget *hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
         gtk_widget_set_valign(hb, GTK_ALIGN_CENTER);
         if (stacked)
             gtk_widget_set_halign(hb, GTK_ALIGN_CENTER);
-        c->nixie_box = hb;
+        c->time_tiles = hb;
         return hb;
     }
 
-    c->time_label = make_label(c->style == STYLE_FUZZY ? "xclk-fuzzy" : "xclk-time", stacked);
+    c->time_label = make_label("xclk-time", stacked);
     return c->time_label;
 }
 
-static void rebuild_nixie_tubes(ClockPlugin *c, const char *str) {
-    if (!c->nixie_box) return;
-    GList *children = gtk_container_get_children(GTK_CONTAINER(c->nixie_box));
-    for (GList *l = children; l != NULL; l = l->next)
-        gtk_widget_destroy(GTK_WIDGET(l->data));
-    g_list_free(children);
-
-    for (const char *p = str; *p; p++) {
-        char ch[2] = { *p, '\0' };
-        if (*p == ' ') {
-            GtkWidget *sp = gtk_label_new(" ");
-            gtk_box_pack_start(GTK_BOX(c->nixie_box), sp, FALSE, FALSE, 1);
-        } else if (*p == ':') {
-            GtkWidget *lbl = gtk_label_new(":");
-            gtk_style_context_add_class(gtk_widget_get_style_context(lbl), "xclk-nixie-colon");
-            gtk_box_pack_start(GTK_BOX(c->nixie_box), lbl, FALSE, FALSE, 0);
-        } else {
-            GtkWidget *lbl = gtk_label_new(ch);
-            gtk_style_context_add_class(gtk_widget_get_style_context(lbl), "xclk-nixie-digit");
-            gtk_box_pack_start(GTK_BOX(c->nixie_box), lbl, FALSE, FALSE, 0);
-        }
+static GtkWidget *create_date_widget(ClockPlugin *c, gboolean stacked) {
+    if (clock_style_uses_tiles(c->date_style)) {
+        GtkWidget *hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+        gtk_widget_set_valign(hb, GTK_ALIGN_CENTER);
+        if (stacked)
+            gtk_widget_set_halign(hb, GTK_ALIGN_CENTER);
+        c->date_tiles = hb;
+        return hb;
     }
-    gtk_widget_show_all(c->nixie_box);
+    c->date_label = make_label("xclk-date", stacked);
+    return c->date_label;
+}
+
+static const char *effective_separator(ClockPlugin *c) {
+    if (c->separator && *c->separator && g_strcmp0(c->separator, "·") != 0)
+        return c->separator;
+    switch (c->sep_style) {
+        case STYLE_LCD:       return ":";
+        case STYLE_FUZZY:     return "~";
+        case STYLE_ANALOG:    return "•";
+        case STYLE_BINARY:    return "|";
+        case STYLE_NIXIE:     return "·";
+        case STYLE_DOTMATRIX: return "⋮";
+        case STYLE_FLIP:      return "·";
+        case STYLE_MORSE:     return "/";
+        case STYLE_ROMAN:     return "❖";
+        case STYLE_NEON:      return "⚡";
+        case STYLE_DIGITAL:
+        default:              return (c->separator && *c->separator) ? c->separator : "·";
+    }
 }
 
 void clock_rebuild_ui(ClockPlugin *c) {
@@ -865,8 +1092,9 @@ void clock_rebuild_ui(ClockPlugin *c) {
 
     c->time_label = NULL;
     c->time_area  = NULL;
-    c->nixie_box  = NULL;
+    c->time_tiles = NULL;
     c->date_label = NULL;
+    c->date_tiles = NULL;
     c->sep_label  = NULL;
     c->disp_time[0] = '\0';
     c->disp_date[0] = '\0';
@@ -883,38 +1111,37 @@ void clock_rebuild_ui(ClockPlugin *c) {
     gtk_widget_set_valign(content_box, GTK_ALIGN_CENTER);
 
     GtkWidget *time_w = clock_has_time(c->layout) ? create_time_widget(c, stacked) : NULL;
-    if (clock_has_date(c->layout))
-        c->date_label = make_label("xclk-date", stacked);
+    GtkWidget *date_w = clock_has_date(c->layout) ? create_date_widget(c, stacked) : NULL;
 
     switch (c->layout) {
         case LAYOUT_TIME_ONLY:
             gtk_box_pack_start(GTK_BOX(content_box), time_w, FALSE, FALSE, 0);
             break;
         case LAYOUT_DATE_ONLY:
-            gtk_box_pack_start(GTK_BOX(content_box), c->date_label, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(content_box), date_w, FALSE, FALSE, 0);
             break;
         case LAYOUT_STACK_TIME_DATE:
             gtk_box_pack_start(GTK_BOX(content_box), time_w, FALSE, FALSE, 0);
-            gtk_box_pack_start(GTK_BOX(content_box), c->date_label, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(content_box), date_w, FALSE, FALSE, 0);
             break;
         case LAYOUT_STACK_DATE_TIME:
-            gtk_box_pack_start(GTK_BOX(content_box), c->date_label, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(content_box), date_w, FALSE, FALSE, 0);
             gtk_box_pack_start(GTK_BOX(content_box), time_w, FALSE, FALSE, 0);
             break;
         case LAYOUT_INLINE_TIME_DATE:
             gtk_box_pack_start(GTK_BOX(content_box), time_w, FALSE, FALSE, 0);
             if (c->separator && *c->separator) {
                 c->sep_label = make_label("xclk-sep", FALSE);
-                gtk_label_set_text(GTK_LABEL(c->sep_label), c->separator);
+                gtk_label_set_text(GTK_LABEL(c->sep_label), effective_separator(c));
                 gtk_box_pack_start(GTK_BOX(content_box), c->sep_label, FALSE, FALSE, 0);
             }
-            gtk_box_pack_start(GTK_BOX(content_box), c->date_label, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(content_box), date_w, FALSE, FALSE, 0);
             break;
         case LAYOUT_INLINE_DATE_TIME:
-            gtk_box_pack_start(GTK_BOX(content_box), c->date_label, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(content_box), date_w, FALSE, FALSE, 0);
             if (c->separator && *c->separator) {
                 c->sep_label = make_label("xclk-sep", FALSE);
-                gtk_label_set_text(GTK_LABEL(c->sep_label), c->separator);
+                gtk_label_set_text(GTK_LABEL(c->sep_label), effective_separator(c));
                 gtk_box_pack_start(GTK_BOX(content_box), c->sep_label, FALSE, FALSE, 0);
             }
             gtk_box_pack_start(GTK_BOX(content_box), time_w, FALSE, FALSE, 0);
@@ -934,20 +1161,23 @@ void clock_update_now(ClockPlugin *c) {
 
     if (c->time_area) {
         gtk_widget_queue_draw(c->time_area);
-    } else if (c->nixie_box) {
+    } else if (c->time_tiles) {
         g_autofree gchar *t = g_date_time_format(now, (c->time_format && *c->time_format) ? c->time_format : "%H:%M");
         const char *str = t ? t : "00:00";
         if (strcmp(str, c->disp_time) != 0) {
             g_strlcpy(c->disp_time, str, sizeof(c->disp_time));
-            rebuild_nixie_tubes(c, str);
+            rebuild_tile_strip(c->time_tiles, "xclk-tt", str, c->time_style == STYLE_FLIP);
         }
     } else if (c->time_label) {
-        char fuzzy_buf[96];
+        char buf[96];
         g_autofree gchar *t = NULL;
         const char *str = "";
-        if (c->style == STYLE_FUZZY) {
-            format_fuzzy_time(now, c->fuzzy_level, fuzzy_buf, sizeof(fuzzy_buf));
-            str = fuzzy_buf;
+        if (c->time_style == STYLE_FUZZY) {
+            format_fuzzy_time(now, c->fuzzy_level, buf, sizeof(buf));
+            str = buf;
+        } else if (c->time_style == STYLE_ROMAN) {
+            format_roman_time(c, now, buf, sizeof(buf));
+            str = buf;
         } else {
             t = g_date_time_format(now, (c->time_format && *c->time_format) ? c->time_format : "%H:%M");
             str = t ? t : "ERR";
@@ -958,26 +1188,48 @@ void clock_update_now(ClockPlugin *c) {
         }
     }
 
-    if (c->date_label) {
-        char fuzzy_date[96];
+    if (c->date_tiles || c->date_label) {
+        char buf[96];
         g_autofree gchar *d = NULL;
         g_autofree gchar *upper = NULL;
         const char *str = "";
 
-        if (c->style == STYLE_FUZZY) {
-            format_fuzzy_date(now, c->fuzzy_level, fuzzy_date, sizeof(fuzzy_date));
-            str = fuzzy_date;
-        } else {
-            d = g_date_time_format(now, (c->date_format && *c->date_format) ? c->date_format : "%a, %b %d");
-            str = d ? d : "ERR";
-            if (c->style == STYLE_LCD || c->style == STYLE_BINARY) {
-                upper = g_ascii_strup(str, -1);
+        switch (c->date_style) {
+            case STYLE_FUZZY:
+                format_fuzzy_date(now, c->fuzzy_level, buf, sizeof(buf));
+                str = buf;
+                break;
+            case STYLE_ROMAN:
+                format_roman_date(now, buf, sizeof(buf));
+                str = buf;
+                break;
+            case STYLE_BINARY:
+                format_binary_date(now, buf, sizeof(buf));
+                str = buf;
+                break;
+            case STYLE_MORSE:
+                format_morse_date(now, buf, sizeof(buf));
+                str = buf;
+                break;
+            case STYLE_LCD:
+            case STYLE_DOTMATRIX:
+            case STYLE_ANALOG:
+                d = g_date_time_format(now, (c->date_format && *c->date_format) ? c->date_format : "%a, %b %d");
+                upper = g_ascii_strup(d ? d : "ERR", -1);
                 str = upper;
-            }
+                break;
+            default:
+                d = g_date_time_format(now, (c->date_format && *c->date_format) ? c->date_format : "%a, %b %d");
+                str = d ? d : "ERR";
+                break;
         }
+
         if (strcmp(str, c->disp_date) != 0) {
             g_strlcpy(c->disp_date, str, sizeof(c->disp_date));
-            gtk_label_set_text(GTK_LABEL(c->date_label), str);
+            if (c->date_tiles)
+                rebuild_tile_strip(c->date_tiles, "xclk-dt", str, FALSE);
+            else if (c->date_label)
+                gtk_label_set_text(GTK_LABEL(c->date_label), str);
         }
     }
 }
