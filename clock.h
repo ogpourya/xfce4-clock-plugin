@@ -36,8 +36,9 @@ typedef struct {
     XfcePanelPlugin *plugin;
     GtkCssProvider  *css;
     GtkWidget       *prefs_dlg;
-    GtkWidget       *popover;
+    GtkWidget       *popup_win;
     GtkWidget       *calendar;
+    gint64           popup_closed_us;
 
     /* Configuration */
     LayoutMode   layout;
@@ -45,9 +46,10 @@ typedef struct {
     gchar       *timezone_id;     /* empty = local system timezone */
     gchar       *time_format;     /* strftime format */
     gchar       *date_format;     /* strftime format */
+    gboolean     show_tooltip;
     gchar       *tooltip_format;  /* strftime format */
     gchar       *separator;       /* inline separator, default "·" */
-    gchar       *click_cmd;       /* empty = built-in calendar popover */
+    gchar       *click_cmd;       /* empty = built-in calendar popup */
 
     gboolean     show_icon;
     gchar       *icon_name;

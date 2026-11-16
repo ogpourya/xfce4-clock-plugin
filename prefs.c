@@ -18,6 +18,7 @@ typedef struct {
     GtkWidget *lbl_date_prev;
     GtkWidget *entry_tz;
     GtkWidget *lbl_tz_status;
+    GtkWidget *cb_tooltip;
     GtkWidget *entry_tooltip;
 
     /* Tab 2: Style & Fonts */
@@ -103,6 +104,8 @@ static void refresh_sensitivity_and_previews(PrefsUI *ui) {
     gtk_widget_set_sensitive(ui->spin_date_size, clock_has_date(c->layout));
     gtk_widget_set_sensitive(ui->combo_date_weight, clock_has_date(c->layout));
 
+    gtk_widget_set_sensitive(ui->entry_tooltip, c->show_tooltip);
+
     gtk_widget_set_sensitive(ui->entry_icon, c->show_icon);
     gtk_widget_set_sensitive(ui->spin_icon_size, c->show_icon);
 
@@ -144,6 +147,7 @@ static void on_prefs_changed(GtkWidget *w, gpointer user_data) {
         clock_reload_timezone(c);
     }
 
+    c->show_tooltip = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ui->cb_tooltip));
     g_free(c->tooltip_format);
     c->tooltip_format = g_strdup(gtk_entry_get_text(GTK_ENTRY(ui->entry_tooltip)));
 
@@ -348,6 +352,11 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     gtk_grid_attach(GTK_GRID(g1), ui->entry_tz, 1, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->lbl_tz_status, 2, r++, 1, 1);
     g_signal_connect(ui->entry_tz, "changed", G_CALLBACK(on_prefs_changed), ui);
+
+    ui->cb_tooltip = gtk_check_button_new_with_label("Show hover tooltip");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_tooltip), c->show_tooltip);
+    gtk_grid_attach(GTK_GRID(g1), ui->cb_tooltip, 0, r++, 3, 1);
+    g_signal_connect(ui->cb_tooltip, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
     ui->entry_tooltip = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(ui->entry_tooltip), c->tooltip_format);

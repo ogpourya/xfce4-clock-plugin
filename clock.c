@@ -77,6 +77,7 @@ static void load_config(ClockPlugin *c) {
     c->timezone_id       = g_strdup("");
     c->time_format       = g_strdup("%H:%M");
     c->date_format       = g_strdup("%a, %b %d");
+    c->show_tooltip      = TRUE;
     c->tooltip_format    = g_strdup("%A, %d %B %Y — %T (%Z)");
     c->separator         = g_strdup("·");
     c->click_cmd         = g_strdup("");
@@ -113,6 +114,7 @@ static void load_config(ClockPlugin *c) {
     g_free(c->timezone_id);    c->timezone_id    = g_strdup(xfce_rc_read_entry(rc, "timezone_id", ""));
     g_free(c->time_format);    c->time_format    = g_strdup(xfce_rc_read_entry(rc, "time_format", "%H:%M"));
     g_free(c->date_format);    c->date_format    = g_strdup(xfce_rc_read_entry(rc, "date_format", "%a, %b %d"));
+    c->show_tooltip      = xfce_rc_read_bool_entry(rc, "show_tooltip", TRUE);
     g_free(c->tooltip_format); c->tooltip_format = g_strdup(xfce_rc_read_entry(rc, "tooltip_format", "%A, %d %B %Y — %T (%Z)"));
     g_free(c->separator);      c->separator      = g_strdup(xfce_rc_read_entry(rc, "separator", "·"));
     g_free(c->click_cmd);      c->click_cmd      = g_strdup(xfce_rc_read_entry(rc, "click_cmd", ""));
@@ -152,6 +154,7 @@ static void save_config_now(ClockPlugin *c) {
     xfce_rc_write_entry(rc, "timezone_id", c->timezone_id ? c->timezone_id : "");
     xfce_rc_write_entry(rc, "time_format", c->time_format ? c->time_format : "");
     xfce_rc_write_entry(rc, "date_format", c->date_format ? c->date_format : "");
+    xfce_rc_write_bool_entry(rc, "show_tooltip", c->show_tooltip);
     xfce_rc_write_entry(rc, "tooltip_format", c->tooltip_format ? c->tooltip_format : "");
     xfce_rc_write_entry(rc, "separator", c->separator ? c->separator : "");
     xfce_rc_write_entry(rc, "click_cmd", c->click_cmd ? c->click_cmd : "");
@@ -281,7 +284,8 @@ void clock_apply_css(ClockPlugin *c) {
         g_string_append(s, "opacity: 0.65; ");
     g_string_append(s, "}\n");
 
-    g_string_append(s, ".xclk-popover { padding: 10px; }\n");
+    g_string_append(s,
+        ".xclk-popup-frame { padding: 8px; border: 1px solid alpha(currentColor, 0.22); border-radius: 6px; }\n");
 
     gtk_css_provider_load_from_data(c->css, s->str, (gssize)s->len, NULL);
     g_string_free(s, TRUE);
@@ -324,6 +328,9 @@ static GtkWidget *make_label(const char *css_class, gboolean stacked) {
 }
 
 void clock_rebuild_ui(ClockPlugin *c) {
+    if (c->event_box)
+        gtk_widget_set_has_tooltip(c->event_box, c->show_tooltip);
+
     GList *children = gtk_container_get_children(GTK_CONTAINER(c->root_box));
     for (GList *l = children; l != NULL; l = l->next)
         gtk_widget_destroy(GTK_WIDGET(l->data));
@@ -448,18 +455,47 @@ static void sync_calendar_today(ClockPlugin *c) {
         (guint)g_date_time_get_day_of_month(now));
 }
 
+static void hide_calendar_popup(ClockPlugin *c) {
+    if (c->popup_win && gtk_widget_get_visible(c->popup_win)) {
+        gtk_widget_hide(c->popup_win);
+        c->popup_closed_us = g_get_monotonic_time();
+        xfce_panel_plugin_block_autohide(c->plugin, FALSE);
+    }
+}
+
 static void on_today_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
     sync_calendar_today((ClockPlugin *)user_data);
 }
 
-static void toggle_calendar_popover(ClockPlugin *c) {
-    if (!c->popover) {
-        c->popover = gtk_popover_new(c->event_box);
-        gtk_popover_set_modal(GTK_POPOVER(c->popover), TRUE);
+static gboolean on_popup_focus_out(GtkWidget *w, GdkEventFocus *ev, gpointer user_data) {
+    (void)w; (void)ev;
+    hide_calendar_popup((ClockPlugin *)user_data);
+    return FALSE;
+}
+
+static gboolean on_popup_key_press(GtkWidget *w, GdkEventKey *ev, gpointer user_data) {
+    (void)w;
+    if (ev->keyval == GDK_KEY_Escape) {
+        hide_calendar_popup((ClockPlugin *)user_data);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void toggle_calendar_popup(ClockPlugin *c) {
+    if (!c->popup_win) {
+        c->popup_win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_window_set_decorated(GTK_WINDOW(c->popup_win), FALSE);
+        gtk_window_set_resizable(GTK_WINDOW(c->popup_win), FALSE);
+        gtk_window_set_skip_taskbar_hint(GTK_WINDOW(c->popup_win), TRUE);
+        gtk_window_set_skip_pager_hint(GTK_WINDOW(c->popup_win), TRUE);
+        gtk_window_set_type_hint(GTK_WINDOW(c->popup_win), GDK_WINDOW_TYPE_HINT_POPUP_MENU);
+        gtk_window_set_keep_above(GTK_WINDOW(c->popup_win), TRUE);
+        gtk_window_stick(GTK_WINDOW(c->popup_win));
 
         GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-        gtk_style_context_add_class(gtk_widget_get_style_context(vbox), "xclk-popover");
+        gtk_style_context_add_class(gtk_widget_get_style_context(vbox), "xclk-popup-frame");
 
         c->calendar = gtk_calendar_new();
         gtk_box_pack_start(GTK_BOX(vbox), c->calendar, FALSE, FALSE, 0);
@@ -468,16 +504,26 @@ static void toggle_calendar_popover(ClockPlugin *c) {
         g_signal_connect(btn_today, "clicked", G_CALLBACK(on_today_clicked), c);
         gtk_box_pack_start(GTK_BOX(vbox), btn_today, FALSE, FALSE, 0);
 
-        gtk_container_add(GTK_CONTAINER(c->popover), vbox);
+        gtk_container_add(GTK_CONTAINER(c->popup_win), vbox);
         gtk_widget_show_all(vbox);
+
+        g_signal_connect(c->popup_win, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
+        g_signal_connect(c->popup_win, "focus-out-event", G_CALLBACK(on_popup_focus_out), c);
+        g_signal_connect(c->popup_win, "key-press-event", G_CALLBACK(on_popup_key_press), c);
     }
 
-    if (gtk_widget_get_visible(c->popover)) {
-        gtk_popover_popdown(GTK_POPOVER(c->popover));
-    } else {
-        sync_calendar_today(c);
-        gtk_popover_popup(GTK_POPOVER(c->popover));
+    if (gtk_widget_get_visible(c->popup_win)) {
+        hide_calendar_popup(c);
+        return;
     }
+
+    /* Ignore click if focus-out just closed the popup on this same click */
+    if (g_get_monotonic_time() - c->popup_closed_us < 180000)
+        return;
+
+    sync_calendar_today(c);
+    xfce_panel_plugin_block_autohide(c->plugin, TRUE);
+    xfce_panel_plugin_popup_window(c->plugin, GTK_WINDOW(c->popup_win), c->event_box);
 }
 
 static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer user_data) {
@@ -491,7 +537,7 @@ static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer user_
                 g_error_free(err);
             }
         } else {
-            toggle_calendar_popover(c);
+            toggle_calendar_popup(c);
         }
         return TRUE;
     }
@@ -501,6 +547,7 @@ static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer user_
 static gboolean on_query_tooltip(GtkWidget *w, gint x, gint y, gboolean kb, GtkTooltip *tip, gpointer user_data) {
     (void)w; (void)x; (void)y; (void)kb;
     ClockPlugin *c = user_data;
+    if (!c->show_tooltip) return FALSE;
     g_autoptr(GDateTime) now = g_date_time_new_now(c->tz);
     if (!now) return FALSE;
 
@@ -537,7 +584,7 @@ static void on_free_data(XfcePanelPlugin *plugin, gpointer user_data) {
     (void)plugin;
     ClockPlugin *c = user_data;
     if (c->prefs_dlg) gtk_widget_destroy(c->prefs_dlg);
-    if (c->popover) gtk_widget_destroy(c->popover);
+    if (c->popup_win) gtk_widget_destroy(c->popup_win);
     if (c->timer_id) g_source_remove(c->timer_id);
     clock_flush_save(c);
 
@@ -573,7 +620,7 @@ static void clock_construct(XfcePanelPlugin *plugin) {
 
     c->event_box = gtk_event_box_new();
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(c->event_box), FALSE);
-    gtk_widget_set_has_tooltip(c->event_box, TRUE);
+    gtk_widget_set_has_tooltip(c->event_box, c->show_tooltip);
 
     c->root_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_valign(c->root_box, GTK_ALIGN_CENTER);
