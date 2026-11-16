@@ -1,0 +1,8 @@
+[Xfce Panel]
+Type=X-XFCE-PanelPlugin
+Name=Clock
+Comment=Customizable digital clock and date plugin with stacked/inline layouts, visual styles, and calendar popover.
+Icon=org.xfce.panel.clock
+X-XFCE-Module=xfce4-clock
+X-XFCE-Internal=FALSE
+X-XFCE-API=2.0
