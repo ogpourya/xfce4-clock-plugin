@@ -80,7 +80,6 @@ static void load_config(ClockPlugin *c) {
     c->show_tooltip      = TRUE;
     c->tooltip_format    = g_strdup("%A, %d %B %Y — %T (%Z)");
     c->separator         = g_strdup("·");
-    c->click_cmd         = g_strdup("");
 
     c->show_icon         = FALSE;
     c->icon_name         = g_strdup("builtin-clock");
@@ -101,7 +100,6 @@ static void load_config(ClockPlugin *c) {
     c->pad_x             = 8;
     c->pad_y             = 2;
     c->radius            = 6;
-    c->show_week_numbers = TRUE;
 
     g_autofree gchar *file = xfce_panel_plugin_lookup_rc_file(c->plugin);
     if (!file) return;
@@ -117,7 +115,6 @@ static void load_config(ClockPlugin *c) {
     c->show_tooltip      = xfce_rc_read_bool_entry(rc, "show_tooltip", TRUE);
     g_free(c->tooltip_format); c->tooltip_format = g_strdup(xfce_rc_read_entry(rc, "tooltip_format", "%A, %d %B %Y — %T (%Z)"));
     g_free(c->separator);      c->separator      = g_strdup(xfce_rc_read_entry(rc, "separator", "·"));
-    g_free(c->click_cmd);      c->click_cmd      = g_strdup(xfce_rc_read_entry(rc, "click_cmd", ""));
 
     c->show_icon         = xfce_rc_read_bool_entry(rc, "show_icon", FALSE);
     g_free(c->icon_name);      c->icon_name      = g_strdup(xfce_rc_read_entry(rc, "icon_name", "builtin-clock"));
@@ -138,7 +135,6 @@ static void load_config(ClockPlugin *c) {
     c->pad_x             = CLAMP(xfce_rc_read_int_entry(rc, "pad_x", 8), 0, 24);
     c->pad_y             = CLAMP(xfce_rc_read_int_entry(rc, "pad_y", 2), 0, 16);
     c->radius            = CLAMP(xfce_rc_read_int_entry(rc, "radius", 6), 0, 24);
-    c->show_week_numbers = xfce_rc_read_bool_entry(rc, "show_week_numbers", TRUE);
 
     xfce_rc_close(rc);
 }
@@ -157,7 +153,6 @@ static void save_config_now(ClockPlugin *c) {
     xfce_rc_write_bool_entry(rc, "show_tooltip", c->show_tooltip);
     xfce_rc_write_entry(rc, "tooltip_format", c->tooltip_format ? c->tooltip_format : "");
     xfce_rc_write_entry(rc, "separator", c->separator ? c->separator : "");
-    xfce_rc_write_entry(rc, "click_cmd", c->click_cmd ? c->click_cmd : "");
 
     xfce_rc_write_bool_entry(rc, "show_icon", c->show_icon);
     xfce_rc_write_entry(rc, "icon_name", c->icon_name ? c->icon_name : "");
@@ -178,7 +173,6 @@ static void save_config_now(ClockPlugin *c) {
     xfce_rc_write_int_entry(rc, "pad_x", c->pad_x);
     xfce_rc_write_int_entry(rc, "pad_y", c->pad_y);
     xfce_rc_write_int_entry(rc, "radius", c->radius);
-    xfce_rc_write_bool_entry(rc, "show_week_numbers", c->show_week_numbers);
 
     xfce_rc_close(rc);
 }
@@ -445,8 +439,6 @@ static void sync_calendar_today(ClockPlugin *c) {
     if (!now) return;
 
     GtkCalendarDisplayOptions opts = GTK_CALENDAR_SHOW_HEADING | GTK_CALENDAR_SHOW_DAY_NAMES;
-    if (c->show_week_numbers)
-        opts |= GTK_CALENDAR_SHOW_WEEK_NUMBERS;
     gtk_calendar_set_display_options(GTK_CALENDAR(c->calendar), opts);
     gtk_calendar_select_month(GTK_CALENDAR(c->calendar),
         (guint)(g_date_time_get_month(now) - 1),
@@ -530,15 +522,7 @@ static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer user_
     (void)w;
     ClockPlugin *c = user_data;
     if (ev->type == GDK_BUTTON_PRESS && ev->button == 1) {
-        if (c->click_cmd && *c->click_cmd) {
-            GError *err = NULL;
-            if (!g_spawn_command_line_async(c->click_cmd, &err)) {
-                g_warning("xfce4-clock: failed to run '%s': %s", c->click_cmd, err->message);
-                g_error_free(err);
-            }
-        } else {
-            toggle_calendar_popup(c);
-        }
+        toggle_calendar_popup(c);
         return TRUE;
     }
     return FALSE;
@@ -600,7 +584,6 @@ static void on_free_data(XfcePanelPlugin *plugin, gpointer user_data) {
     g_free(c->date_format);
     g_free(c->tooltip_format);
     g_free(c->separator);
-    g_free(c->click_cmd);
     g_free(c->icon_name);
     g_free(c->time_color);
     g_free(c->date_color);

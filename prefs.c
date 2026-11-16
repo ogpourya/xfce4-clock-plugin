@@ -35,14 +35,12 @@ typedef struct {
     GtkWidget *entry_icon;
     GtkWidget *spin_icon_size;
 
-    /* Tab 3: Colors & Click */
+    /* Tab 3: Colors */
     GtkWidget *col_time;
     GtkWidget *col_date;
     GtkWidget *col_sep;
     GtkWidget *col_bg;
     GtkWidget *col_accent;
-    GtkWidget *cb_week_nums;
-    GtkWidget *entry_cmd;
 } PrefsUI;
 
 static const struct { const char *label; const char *fmt; } TIME_PRESETS[] = {
@@ -171,10 +169,6 @@ static void on_prefs_changed(GtkWidget *w, gpointer user_data) {
     g_free(c->sep_color);    c->sep_color    = get_color_btn_hex(GTK_COLOR_BUTTON(ui->col_sep));
     g_free(c->bg_color);     c->bg_color     = get_color_btn_hex(GTK_COLOR_BUTTON(ui->col_bg));
     g_free(c->accent_color); c->accent_color = get_color_btn_hex(GTK_COLOR_BUTTON(ui->col_accent));
-
-    c->show_week_numbers = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ui->cb_week_nums));
-    g_free(c->click_cmd);
-    c->click_cmd = g_strdup(gtk_entry_get_text(GTK_ENTRY(ui->entry_cmd)));
 
     refresh_sensitivity_and_previews(ui);
     clock_apply_css(c);
@@ -441,7 +435,7 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
 
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), g2, gtk_label_new("Style & Fonts"));
 
-    /* ==================== Tab 3: Colors & Click ==================== */
+    /* ==================== Tab 3: Colors ==================== */
     GtkWidget *g3 = new_grid();
     r = 0;
 
@@ -451,19 +445,7 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     ui->col_bg     = make_color_row(ui, GTK_GRID(g3), r++, "Background fill:", c->bg_color);
     ui->col_accent = make_color_row(ui, GTK_GRID(g3), r++, "Border / accent:", c->accent_color);
 
-    ui->cb_week_nums = gtk_check_button_new_with_label("Show week numbers in calendar popup");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_week_nums), c->show_week_numbers);
-    gtk_grid_attach(GTK_GRID(g3), ui->cb_week_nums, 0, r++, 3, 1);
-    g_signal_connect(ui->cb_week_nums, "toggled", G_CALLBACK(on_prefs_changed), ui);
-
-    ui->entry_cmd = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(ui->entry_cmd), "Blank = built-in calendar popup");
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_cmd), c->click_cmd);
-    gtk_grid_attach(GTK_GRID(g3), make_row_label("Left-click command:"), 0, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g3), ui->entry_cmd, 1, r++, 2, 1);
-    g_signal_connect(ui->entry_cmd, "changed", G_CALLBACK(on_prefs_changed), ui);
-
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), g3, gtk_label_new("Colors & Click"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), g3, gtk_label_new("Colors"));
 
     ui->updating = FALSE;
     refresh_sensitivity_and_previews(ui);

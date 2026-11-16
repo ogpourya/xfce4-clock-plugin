@@ -71,7 +71,6 @@ typedef struct {
     gint         pad_y;           /* 0..16, default 2 */
     gint         radius;          /* 0..24, default 6 */
 
-    gboolean     show_week_numbers;
 
     /* Runtime state */
     GTimeZone   *tz;
