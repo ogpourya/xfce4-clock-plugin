@@ -88,6 +88,8 @@ extern const char *const STYLE_NAMES[STYLE_COUNT];
 extern const char *const FUZZY_NAMES[FUZZY_COUNT];
 
 /* Core lifecycle & rendering (clock.c) */
+void     clock_set_defaults(ClockPlugin *c);
+void     clock_reset_defaults(ClockPlugin *c);
 void     clock_reload_timezone(ClockPlugin *c);
 gboolean clock_has_time(LayoutMode mode);
 gboolean clock_has_date(LayoutMode mode);

@@ -3,6 +3,8 @@
 #include <libxfce4ui/libxfce4ui.h>
 #include <string.h>
 
+#define RESP_RESET 1
+
 typedef struct {
     ClockPlugin *c;
     gboolean     updating;
@@ -99,13 +101,13 @@ static void refresh_sensitivity_and_previews(PrefsUI *ui) {
     gtk_widget_set_sensitive(ui->spin_time_size, has_t);
     gtk_widget_set_sensitive(ui->cb_time_bold, has_t && is_text_time);
 
-    gtk_widget_set_visible(ui->lbl_fuzzy, has_t && is_fuzzy);
-    gtk_widget_set_visible(ui->combo_fuzzy, has_t && is_fuzzy);
+    gtk_widget_set_visible(ui->lbl_fuzzy, is_fuzzy);
+    gtk_widget_set_visible(ui->combo_fuzzy, is_fuzzy);
 
-    gtk_widget_set_sensitive(ui->entry_date_fmt, has_d);
-    gtk_widget_set_sensitive(ui->combo_date_preset, has_d);
+    gtk_widget_set_sensitive(ui->entry_date_fmt, has_d && !is_fuzzy);
+    gtk_widget_set_sensitive(ui->combo_date_preset, has_d && !is_fuzzy);
     gtk_widget_set_sensitive(ui->spin_date_size, has_d);
-    gtk_widget_set_sensitive(ui->cb_date_bold, has_d);
+    gtk_widget_set_sensitive(ui->cb_date_bold, has_d && c->style != STYLE_NIXIE);
 
     gtk_widget_set_sensitive(ui->entry_tooltip, c->show_tooltip);
 
@@ -120,6 +122,56 @@ static void refresh_sensitivity_and_previews(PrefsUI *ui) {
         gtk_label_set_text(GTK_LABEL(ui->lbl_tz_status), "Active");
     else
         gtk_label_set_text(GTK_LABEL(ui->lbl_tz_status), "Unknown ID (falling back to local)");
+}
+
+static void sync_widgets_from_config(PrefsUI *ui) {
+    ClockPlugin *c = ui->c;
+    ui->updating = TRUE;
+
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_layout), c->layout);
+    gtk_entry_set_text(GTK_ENTRY(ui->entry_sep), c->separator);
+
+    int active_tp = (int)G_N_ELEMENTS(TIME_PRESETS) - 1;
+    for (int i = 0; i < (int)G_N_ELEMENTS(TIME_PRESETS); i++) {
+        if (TIME_PRESETS[i].fmt && g_strcmp0(c->time_format, TIME_PRESETS[i].fmt) == 0) {
+            active_tp = i;
+            break;
+        }
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_time_preset), active_tp);
+    gtk_entry_set_text(GTK_ENTRY(ui->entry_time_fmt), c->time_format);
+
+    int active_dp = (int)G_N_ELEMENTS(DATE_PRESETS) - 1;
+    for (int i = 0; i < (int)G_N_ELEMENTS(DATE_PRESETS); i++) {
+        if (DATE_PRESETS[i].fmt && g_strcmp0(c->date_format, DATE_PRESETS[i].fmt) == 0) {
+            active_dp = i;
+            break;
+        }
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_date_preset), active_dp);
+    gtk_entry_set_text(GTK_ENTRY(ui->entry_date_fmt), c->date_format);
+
+    gtk_entry_set_text(GTK_ENTRY(ui->entry_tz), c->timezone_id);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_tooltip), c->show_tooltip);
+    gtk_entry_set_text(GTK_ENTRY(ui->entry_tooltip), c->tooltip_format);
+
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_style), c->style);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_fuzzy), c->fuzzy_level);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_time_size), c->time_size);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_time_bold), c->time_bold);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_date_size), c->date_size);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_date_bold), c->date_bold);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_spacing), c->spacing);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_icon), c->show_icon);
+
+    set_color_btn(GTK_COLOR_BUTTON(ui->col_time), c->time_color);
+    set_color_btn(GTK_COLOR_BUTTON(ui->col_date), c->date_color);
+    set_color_btn(GTK_COLOR_BUTTON(ui->col_sep), c->sep_color);
+    set_color_btn(GTK_COLOR_BUTTON(ui->col_bg), c->bg_color);
+    set_color_btn(GTK_COLOR_BUTTON(ui->col_accent), c->accent_color);
+
+    ui->updating = FALSE;
+    refresh_sensitivity_and_previews(ui);
 }
 
 static void on_prefs_changed(GtkWidget *w, gpointer user_data) {
@@ -237,6 +289,22 @@ static GtkWidget *make_row_label(const char *text) {
     return lbl;
 }
 
+static void on_dialog_response(GtkDialog *dlg, gint response_id, gpointer user_data) {
+    PrefsUI *ui = user_data;
+    if (response_id == RESP_RESET) {
+        if (xfce_dialog_confirm(GTK_WINDOW(dlg), "edit-undo-symbolic", "_Reset",
+                "All Clock settings will be restored to their default values.",
+                "Reset Clock settings to defaults?")) {
+            clock_reset_defaults(ui->c);
+            sync_widgets_from_config(ui);
+            clock_apply_css(ui->c);
+            clock_rebuild_ui(ui->c);
+        }
+        return;
+    }
+    gtk_widget_destroy(GTK_WIDGET(dlg));
+}
+
 static void on_prefs_destroy(GtkWidget *dlg, gpointer user_data) {
     (void)dlg;
     PrefsUI *ui = user_data;
@@ -260,6 +328,7 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
         "Clock Settings",
         GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(plugin))),
         GTK_DIALOG_DESTROY_WITH_PARENT,
+        "edit-undo-symbolic", "_Reset Settings", RESP_RESET,
         "window-close-symbolic", "_Close", GTK_RESPONSE_OK,
         NULL);
     gtk_window_set_default_size(GTK_WINDOW(dlg), 440, -1);
@@ -280,33 +349,25 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     ui->combo_layout = gtk_combo_box_text_new();
     for (int i = 0; i < LAYOUT_COUNT; i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_layout), LAYOUT_NAMES[i]);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_layout), c->layout);
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Layout & order:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->combo_layout, 1, r++, 2, 1);
     g_signal_connect(ui->combo_layout, "changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->entry_sep = gtk_entry_new();
     gtk_entry_set_max_length(GTK_ENTRY(ui->entry_sep), 16);
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_sep), c->separator);
     gtk_widget_set_tooltip_text(ui->entry_sep, "Separator shown between time and date in Inline layouts");
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Inline separator:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->entry_sep, 1, r++, 2, 1);
     g_signal_connect(ui->entry_sep, "changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->combo_time_preset = gtk_combo_box_text_new();
-    int active_tp = (int)G_N_ELEMENTS(TIME_PRESETS) - 1;
-    for (int i = 0; i < (int)G_N_ELEMENTS(TIME_PRESETS); i++) {
+    for (int i = 0; i < (int)G_N_ELEMENTS(TIME_PRESETS); i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_time_preset), TIME_PRESETS[i].label);
-        if (TIME_PRESETS[i].fmt && g_strcmp0(c->time_format, TIME_PRESETS[i].fmt) == 0)
-            active_tp = i;
-    }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_time_preset), active_tp);
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Time preset:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->combo_time_preset, 1, r++, 2, 1);
     g_signal_connect(ui->combo_time_preset, "changed", G_CALLBACK(on_time_preset_changed), ui);
 
     ui->entry_time_fmt = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_time_fmt), c->time_format);
     ui->lbl_time_prev = make_row_label("");
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Time format:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->entry_time_fmt, 1, r, 1, 1);
@@ -314,19 +375,13 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     g_signal_connect(ui->entry_time_fmt, "changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->combo_date_preset = gtk_combo_box_text_new();
-    int active_dp = (int)G_N_ELEMENTS(DATE_PRESETS) - 1;
-    for (int i = 0; i < (int)G_N_ELEMENTS(DATE_PRESETS); i++) {
+    for (int i = 0; i < (int)G_N_ELEMENTS(DATE_PRESETS); i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_date_preset), DATE_PRESETS[i].label);
-        if (DATE_PRESETS[i].fmt && g_strcmp0(c->date_format, DATE_PRESETS[i].fmt) == 0)
-            active_dp = i;
-    }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_date_preset), active_dp);
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Date preset:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->combo_date_preset, 1, r++, 2, 1);
     g_signal_connect(ui->combo_date_preset, "changed", G_CALLBACK(on_date_preset_changed), ui);
 
     ui->entry_date_fmt = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_date_fmt), c->date_format);
     ui->lbl_date_prev = make_row_label("");
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Date format:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->entry_date_fmt, 1, r, 1, 1);
@@ -335,7 +390,6 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
 
     ui->entry_tz = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->entry_tz), "Local (or e.g. Asia/Tehran, UTC)");
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_tz), c->timezone_id);
     ui->lbl_tz_status = make_row_label("");
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Timezone:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->entry_tz, 1, r, 1, 1);
@@ -343,12 +397,10 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     g_signal_connect(ui->entry_tz, "changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->cb_tooltip = gtk_check_button_new_with_label("Show hover tooltip");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_tooltip), c->show_tooltip);
     gtk_grid_attach(GTK_GRID(g1), ui->cb_tooltip, 0, r++, 3, 1);
     g_signal_connect(ui->cb_tooltip, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
     ui->entry_tooltip = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_tooltip), c->tooltip_format);
     gtk_grid_attach(GTK_GRID(g1), make_row_label("Tooltip format:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g1), ui->entry_tooltip, 1, r++, 2, 1);
     g_signal_connect(ui->entry_tooltip, "changed", G_CALLBACK(on_prefs_changed), ui);
@@ -362,7 +414,6 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     ui->combo_style = gtk_combo_box_text_new();
     for (int i = 0; i < STYLE_COUNT; i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_style), STYLE_NAMES[i]);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_style), c->style);
     gtk_grid_attach(GTK_GRID(g2), make_row_label("Visual style:"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->combo_style, 1, r++, 2, 1);
     g_signal_connect(ui->combo_style, "changed", G_CALLBACK(on_prefs_changed), ui);
@@ -371,15 +422,12 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     ui->combo_fuzzy = gtk_combo_box_text_new();
     for (int i = 0; i < FUZZY_COUNT; i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_fuzzy), FUZZY_NAMES[i]);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_fuzzy), c->fuzzy_level);
     gtk_grid_attach(GTK_GRID(g2), ui->lbl_fuzzy, 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->combo_fuzzy, 1, r++, 2, 1);
     g_signal_connect(ui->combo_fuzzy, "changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->spin_time_size = gtk_spin_button_new_with_range(7, 36, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_time_size), c->time_size);
     ui->cb_time_bold = gtk_check_button_new_with_label("Bold");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_time_bold), c->time_bold);
     gtk_grid_attach(GTK_GRID(g2), make_row_label("Time size (px):"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->spin_time_size, 1, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->cb_time_bold, 2, r++, 1, 1);
@@ -387,9 +435,7 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     g_signal_connect(ui->cb_time_bold, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
     ui->spin_date_size = gtk_spin_button_new_with_range(6, 28, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_date_size), c->date_size);
     ui->cb_date_bold = gtk_check_button_new_with_label("Bold");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_date_bold), c->date_bold);
     gtk_grid_attach(GTK_GRID(g2), make_row_label("Date size (px):"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->spin_date_size, 1, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->cb_date_bold, 2, r++, 1, 1);
@@ -397,13 +443,11 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     g_signal_connect(ui->cb_date_bold, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
     ui->spin_spacing = gtk_spin_button_new_with_range(0, 20, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_spacing), c->spacing);
     gtk_grid_attach(GTK_GRID(g2), make_row_label("Spacing (px):"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->spin_spacing, 1, r++, 1, 1);
     g_signal_connect(ui->spin_spacing, "value-changed", G_CALLBACK(on_prefs_changed), ui);
 
     ui->cb_icon = gtk_check_button_new_with_label("Show clock icon");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_icon), c->show_icon);
     gtk_grid_attach(GTK_GRID(g2), ui->cb_icon, 0, r++, 3, 1);
     g_signal_connect(ui->cb_icon, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
@@ -421,10 +465,9 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
 
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), g3, gtk_label_new("Colors"));
 
-    ui->updating = FALSE;
     gtk_widget_show_all(dlg);
-    refresh_sensitivity_and_previews(ui);
+    sync_widgets_from_config(ui);
 
-    g_signal_connect(dlg, "response", G_CALLBACK(gtk_widget_destroy), NULL);
+    g_signal_connect(dlg, "response", G_CALLBACK(on_dialog_response), ui);
     g_signal_connect(dlg, "destroy", G_CALLBACK(on_prefs_destroy), ui);
 }

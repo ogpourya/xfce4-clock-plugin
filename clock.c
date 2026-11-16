@@ -113,21 +113,15 @@ static void format_fuzzy_time(GDateTime *now, FuzzyLevel level, char *out, size_
                 if (disp_h == 0 || disp_h == 12) g_snprintf(out, len, "around %s", hword);
                 else g_snprintf(out, len, "around %s o'clock", hword);
                 break;
-            case 1:
-                g_snprintf(out, len, "quarter past %s", hword);
-                break;
-            case 2:
-                g_snprintf(out, len, "half past %s", hword);
-                break;
-            default:
-                g_snprintf(out, len, "quarter to %s", hword);
-                break;
+            case 1:  g_snprintf(out, len, "quarter past %s", hword); break;
+            case 2:  g_snprintf(out, len, "half past %s", hword); break;
+            default: g_snprintf(out, len, "quarter to %s", hword); break;
         }
         return;
     }
 
     /* FUZZY_5MIN */
-    int bucket = (m + 2) / 5; /* 0..12 */
+    int bucket = (m + 2) / 5;
     int disp_h = (bucket >= 7) ? ((h + 1) % 24) : h;
     const char *hword = (disp_h == 0) ? "midnight" : (disp_h == 12) ? "noon" : HOURS[disp_h % 12];
 
@@ -149,6 +143,28 @@ static void format_fuzzy_time(GDateTime *now, FuzzyLevel level, char *out, size_
         case 10: g_snprintf(out, len, "ten to %s", hword); break;
         default: g_snprintf(out, len, "five to %s", hword); break;
     }
+}
+
+static void format_fuzzy_date(GDateTime *now, FuzzyLevel level, char *out, size_t len) {
+    g_autofree gchar *weekday = g_date_time_format(now, "%A");
+    g_autofree gchar *month   = g_date_time_format(now, "%B");
+    int day = g_date_time_get_day_of_month(now);
+
+    if (level == FUZZY_DAYPART) {
+        const char *part = (day <= 10) ? "early" : (day <= 20) ? "mid" : "late";
+        g_snprintf(out, len, "%s, %s %s", weekday ? weekday : "", part, month ? month : "");
+        return;
+    }
+
+    const char *suf = "th";
+    if (day % 10 == 1 && day != 11) suf = "st";
+    else if (day % 10 == 2 && day != 12) suf = "nd";
+    else if (day % 10 == 3 && day != 13) suf = "rd";
+
+    if (level == FUZZY_15MIN)
+        g_snprintf(out, len, "%s, %s %d%s", weekday ? weekday : "", month ? month : "", day, suf);
+    else
+        g_snprintf(out, len, "%s the %d%s of %s", weekday ? weekday : "", day, suf, month ? month : "");
 }
 
 static void get_time_fg_rgba(ClockPlugin *c, GdkRGBA *out) {
@@ -175,19 +191,8 @@ static void get_accent_rgba(ClockPlugin *c, const GdkRGBA *fg, GdkRGBA *out) {
 /* ==================== 7-Segment LCD Renderer ==================== */
 
 static void draw_7seg_digit(cairo_t *cr, double x, double y, double w, double h, int digit, const GdkRGBA *fg) {
-    /* Bitmask: bit0=top(a), bit1=top-right(b), bit2=bot-right(c), bit3=bot(d), bit4=bot-left(e), bit5=top-left(f), bit6=mid(g) */
     static const unsigned char MASKS[11] = {
-        0x3F, /* 0 */
-        0x06, /* 1 */
-        0x5B, /* 2 */
-        0x4F, /* 3 */
-        0x66, /* 4 */
-        0x6D, /* 5 */
-        0x7D, /* 6 */
-        0x07, /* 7 */
-        0x7F, /* 8 */
-        0x6F, /* 9 */
-        0x00, /* blank */
+        0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x00
     };
     unsigned char mask = (digit >= 0 && digit <= 9) ? MASKS[digit] : 0x00;
 
@@ -204,43 +209,43 @@ static void draw_7seg_digit(cairo_t *cr, double x, double y, double w, double h,
         double sx_mid = skew * 0.5;
         cairo_new_path(cr);
         switch (seg) {
-            case 0: /* top */
+            case 0:
                 cairo_move_to(cr, x + g + sx_top, y);
                 cairo_line_to(cr, x + w - g + sx_top, y);
                 cairo_line_to(cr, x + w - g - t * 0.6 + sx_top, y + t);
                 cairo_line_to(cr, x + g + t * 0.6 + sx_top, y + t);
                 break;
-            case 1: /* top-right */
+            case 1:
                 cairo_move_to(cr, x + w + sx_top, y + g);
                 cairo_line_to(cr, x + w + sx_mid, ym - g * 0.6);
                 cairo_line_to(cr, x + w - t + sx_mid, ym - g * 0.6 - t * 0.45);
                 cairo_line_to(cr, x + w - t + sx_top, y + g + t * 0.6);
                 break;
-            case 2: /* bottom-right */
+            case 2:
                 cairo_move_to(cr, x + w + sx_mid, ym + g * 0.6);
                 cairo_line_to(cr, x + w, y + h - g);
                 cairo_line_to(cr, x + w - t, y + h - g - t * 0.6);
                 cairo_line_to(cr, x + w - t + sx_mid, ym + g * 0.6 + t * 0.45);
                 break;
-            case 3: /* bottom */
+            case 3:
                 cairo_move_to(cr, x + g + t * 0.6, y + h - t);
                 cairo_line_to(cr, x + w - g - t * 0.6, y + h - t);
                 cairo_line_to(cr, x + w - g, y + h);
                 cairo_line_to(cr, x + g, y + h);
                 break;
-            case 4: /* bottom-left */
+            case 4:
                 cairo_move_to(cr, x + sx_mid, ym + g * 0.6);
                 cairo_line_to(cr, x + t + sx_mid, ym + g * 0.6 + t * 0.45);
                 cairo_line_to(cr, x + t, y + h - g - t * 0.6);
                 cairo_line_to(cr, x, y + h - g);
                 break;
-            case 5: /* top-left */
+            case 5:
                 cairo_move_to(cr, x + sx_top, y + g);
                 cairo_line_to(cr, x + t + sx_top, y + g + t * 0.6);
                 cairo_line_to(cr, x + t + sx_mid, ym - g * 0.6 - t * 0.45);
                 cairo_line_to(cr, x + sx_mid, ym - g * 0.6);
                 break;
-            default: /* middle */
+            default:
                 cairo_move_to(cr, x + g + t * 0.45 + sx_mid, ym - t * 0.5);
                 cairo_line_to(cr, x + w - g - t * 0.45 + sx_mid, ym - t * 0.5);
                 cairo_line_to(cr, x + w - g + sx_mid, ym);
@@ -319,7 +324,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     double r = MIN(width, height) * 0.5 - 1.5;
     if (r < 6.0) return;
 
-    /* Outer dial circle */
     cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, 0.10);
     cairo_arc(cr, cx, cy, r, 0, 2.0 * M_PI);
     cairo_fill(cr);
@@ -329,7 +333,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     cairo_arc(cr, cx, cy, r, 0, 2.0 * M_PI);
     cairo_stroke(cr);
 
-    /* 12 hour markers */
     for (int i = 0; i < 12; i++) {
         double ang = i * (M_PI / 6.0) - M_PI * 0.5;
         gboolean cardinal = (i % 3) == 0;
@@ -348,7 +351,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
 
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
 
-    /* Hour hand */
     double h_ang = ((h + m / 60.0) / 12.0) * 2.0 * M_PI - M_PI * 0.5;
     cairo_set_line_width(cr, MAX(1.6, r * 0.13));
     cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, 0.96);
@@ -356,7 +358,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     cairo_line_to(cr, cx + cos(h_ang) * r * 0.54, cy + sin(h_ang) * r * 0.54);
     cairo_stroke(cr);
 
-    /* Minute hand */
     double m_ang = ((m + s / 60.0) / 60.0) * 2.0 * M_PI - M_PI * 0.5;
     cairo_set_line_width(cr, MAX(1.2, r * 0.09));
     cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, 0.92);
@@ -364,7 +365,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
     cairo_line_to(cr, cx + cos(m_ang) * r * 0.78, cy + sin(m_ang) * r * 0.78);
     cairo_stroke(cr);
 
-    /* Second hand (when %S is enabled) */
     if (format_has_seconds(c->time_format)) {
         double s_ang = (s / 60.0) * 2.0 * M_PI - M_PI * 0.5;
         cairo_set_line_width(cr, MAX(0.9, r * 0.05));
@@ -374,7 +374,6 @@ static void draw_analog_clock(ClockPlugin *c, cairo_t *cr, int width, int height
         cairo_stroke(cr);
     }
 
-    /* Center pivot */
     cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, 1.0);
     cairo_arc(cr, cx, cy, MAX(1.3, r * 0.10), 0, 2.0 * M_PI);
     cairo_fill(cr);
@@ -414,7 +413,7 @@ static void draw_binary_clock(ClockPlugin *c, cairo_t *cr, int width, int height
             x += cell * 0.35;
         double cx = x + cell * 0.5;
         for (int bit = 0; bit < 4; bit++) {
-            int row = 3 - bit; /* bit 0 at bottom */
+            int row = 3 - bit;
             double cy = y0 + (row + 0.5) * cell;
             if (bit >= max_bits[col])
                 continue;
@@ -435,24 +434,28 @@ static gboolean on_canvas_draw(GtkWidget *widget, cairo_t *cr, gpointer user_dat
     if (!now) return FALSE;
 
     switch (c->style) {
-        case STYLE_LCD:
-            draw_lcd_clock(c, cr, w, h, now);
-            break;
-        case STYLE_ANALOG:
-            draw_analog_clock(c, cr, w, h, now);
-            break;
-        case STYLE_BINARY:
-            draw_binary_clock(c, cr, w, h, now);
-            break;
-        default:
-            break;
+        case STYLE_LCD:    draw_lcd_clock(c, cr, w, h, now); break;
+        case STYLE_ANALOG: draw_analog_clock(c, cr, w, h, now); break;
+        case STYLE_BINARY: draw_binary_clock(c, cr, w, h, now); break;
+        default:           break;
     }
     return FALSE;
 }
 
-/* ==================== Config Load / Save ==================== */
+/* ==================== Config Load / Save / Reset ==================== */
 
-static void load_config(ClockPlugin *c) {
+void clock_set_defaults(ClockPlugin *c) {
+    g_free(c->timezone_id);
+    g_free(c->time_format);
+    g_free(c->date_format);
+    g_free(c->tooltip_format);
+    g_free(c->separator);
+    g_free(c->time_color);
+    g_free(c->date_color);
+    g_free(c->sep_color);
+    g_free(c->bg_color);
+    g_free(c->accent_color);
+
     c->layout            = LAYOUT_STACK_TIME_DATE;
     c->style             = STYLE_DIGITAL;
     c->fuzzy_level       = FUZZY_5MIN;
@@ -475,6 +478,10 @@ static void load_config(ClockPlugin *c) {
     c->sep_color         = g_strdup("#888888");
     c->bg_color          = g_strdup("");
     c->accent_color      = g_strdup("");
+}
+
+static void load_config(ClockPlugin *c) {
+    clock_set_defaults(c);
 
     g_autofree gchar *file = xfce_panel_plugin_lookup_rc_file(c->plugin);
     if (!file) return;
@@ -540,6 +547,16 @@ static void save_config_now(ClockPlugin *c) {
     xfce_rc_close(rc);
 }
 
+void clock_reset_defaults(ClockPlugin *c) {
+    if (c->save_timeout_id) {
+        g_source_remove(c->save_timeout_id);
+        c->save_timeout_id = 0;
+    }
+    clock_set_defaults(c);
+    clock_reload_timezone(c);
+    save_config_now(c);
+}
+
 static gboolean on_save_timeout(gpointer user_data) {
     ClockPlugin *c = user_data;
     c->save_timeout_id = 0;
@@ -573,13 +590,51 @@ void clock_apply_css(ClockPlugin *c) {
 
     const char *bg = (c->bg_color && *c->bg_color) ? c->bg_color : NULL;
     const char *nixie_fg = (c->time_color && *c->time_color) ? c->time_color : "#ff7b1c";
+    const char *nixie_date_fg = (c->date_color && *c->date_color) ? c->date_color : nixie_fg;
 
-    GString *s = g_string_sized_new(640);
-    g_string_append_printf(s,
-        ".xclk-box { padding: 2px 7px; border-radius: 5px; transition: background-color 120ms ease; background-color: %s; }\n"
-        ".xclk-box:hover { background-color: alpha(currentColor, 0.08); }\n",
-        bg ? bg : "transparent");
+    GString *s = g_string_sized_new(1024);
 
+    /* Outer container styled coherently per visual preset */
+    switch (c->style) {
+        case STYLE_LCD:
+            g_string_append_printf(s,
+                ".xclk-box { padding: 2px 8px; border-radius: 4px; "
+                "background-color: %s; border: 1px solid alpha(currentColor, 0.24); }\n"
+                ".xclk-box:hover { background-color: alpha(currentColor, 0.11); }\n",
+                bg ? bg : "alpha(currentColor, 0.06)");
+            break;
+        case STYLE_NIXIE:
+            g_string_append_printf(s,
+                ".xclk-box { padding: 2px 8px; border-radius: 6px; "
+                "background-color: %s; border: 1px solid alpha(%s, 0.35); }\n"
+                ".xclk-box:hover { border-color: alpha(%s, 0.65); }\n",
+                bg ? bg : "rgba(18, 12, 8, 0.88)", nixie_fg, nixie_fg);
+            break;
+        case STYLE_ANALOG:
+            g_string_append_printf(s,
+                ".xclk-box { padding: 2px 8px; border-radius: 999px; "
+                "background-color: %s; }\n"
+                ".xclk-box:hover { background-color: alpha(currentColor, 0.08); }\n",
+                bg ? bg : "transparent");
+            break;
+        case STYLE_BINARY:
+            g_string_append_printf(s,
+                ".xclk-box { padding: 2px 8px; border-radius: 4px; "
+                "background-color: %s; border: 1px dashed alpha(currentColor, 0.22); }\n"
+                ".xclk-box:hover { background-color: alpha(currentColor, 0.09); }\n",
+                bg ? bg : "alpha(currentColor, 0.04)");
+            break;
+        case STYLE_FUZZY:
+        case STYLE_DIGITAL:
+        default:
+            g_string_append_printf(s,
+                ".xclk-box { padding: 2px 7px; border-radius: 5px; transition: background-color 120ms ease; background-color: %s; }\n"
+                ".xclk-box:hover { background-color: alpha(currentColor, 0.08); }\n",
+                bg ? bg : "transparent");
+            break;
+    }
+
+    /* Time text styling */
     g_string_append_printf(s,
         ".xclk-time { font-size: %dpx; font-weight: %s; font-variant-numeric: tabular-nums; line-height: 1.05; ",
         c->time_size, c->time_bold ? "bold" : "normal");
@@ -596,30 +651,102 @@ void clock_apply_css(ClockPlugin *c) {
 
     g_string_append_printf(s,
         ".xclk-nixie-digit { font-family: monospace; font-size: %dpx; font-weight: bold; "
-        "color: %s; background-color: rgba(18, 12, 8, 0.88); "
-        "border: 1px solid alpha(%s, 0.45); border-radius: 4px; "
+        "color: %s; background-color: rgba(28, 18, 10, 0.92); "
+        "border: 1px solid alpha(%s, 0.42); border-radius: 4px; "
         "padding: 1px 4px; text-shadow: 0 0 6px %s; line-height: 1.0; }\n"
         ".xclk-nixie-colon { font-family: monospace; font-size: %dpx; font-weight: bold; "
         "color: %s; text-shadow: 0 0 5px %s; padding: 0 1px; line-height: 1.0; }\n",
         c->time_size, nixie_fg, nixie_fg, nixie_fg,
         c->time_size, nixie_fg, nixie_fg);
 
+    /* Date text styling matched to every visual style */
     g_string_append_printf(s,
         ".xclk-date { font-size: %dpx; font-weight: %s; font-variant-numeric: tabular-nums; line-height: 1.05; ",
         c->date_size, c->date_bold ? "bold" : "normal");
-    if (c->date_color && *c->date_color)
-        g_string_append_printf(s, "color: %s; ", c->date_color);
-    else
-        g_string_append(s, "opacity: 0.82; ");
+    switch (c->style) {
+        case STYLE_LCD:
+        case STYLE_BINARY:
+            g_string_append(s, "font-family: monospace; letter-spacing: 0.06em; ");
+            if (c->date_color && *c->date_color)
+                g_string_append_printf(s, "color: %s; ", c->date_color);
+            else if (c->time_color && *c->time_color)
+                g_string_append_printf(s, "color: %s; opacity: 0.90; ", c->time_color);
+            else
+                g_string_append(s, "opacity: 0.92; ");
+            break;
+        case STYLE_FUZZY:
+            g_string_append(s, "font-style: italic; ");
+            if (c->date_color && *c->date_color)
+                g_string_append_printf(s, "color: %s; ", c->date_color);
+            else if (c->time_color && *c->time_color)
+                g_string_append_printf(s, "color: %s; opacity: 0.88; ", c->time_color);
+            else
+                g_string_append(s, "opacity: 0.86; ");
+            break;
+        case STYLE_ANALOG:
+            g_string_append(s, "font-family: serif; letter-spacing: 0.04em; ");
+            if (c->date_color && *c->date_color)
+                g_string_append_printf(s, "color: %s; ", c->date_color);
+            else if (c->time_color && *c->time_color)
+                g_string_append_printf(s, "color: %s; opacity: 0.88; ", c->time_color);
+            else
+                g_string_append(s, "opacity: 0.88; ");
+            break;
+        case STYLE_NIXIE:
+            g_string_append_printf(s,
+                "font-family: monospace; letter-spacing: 0.05em; color: %s; text-shadow: 0 0 5px %s; ",
+                nixie_date_fg, nixie_date_fg);
+            break;
+        case STYLE_DIGITAL:
+        default:
+            if (c->date_color && *c->date_color)
+                g_string_append_printf(s, "color: %s; ", c->date_color);
+            else
+                g_string_append(s, "opacity: 0.82; ");
+            break;
+    }
     g_string_append(s, "}\n");
 
+    /* Separator styling matched to every visual style */
     g_string_append_printf(s,
         ".xclk-sep { font-size: %dpx; font-weight: 600; margin: 0 %dpx; ",
         MAX(c->time_size, c->date_size), MAX(2, c->spacing + 2));
-    if (c->sep_color && *c->sep_color)
-        g_string_append_printf(s, "color: %s; ", c->sep_color);
-    else
-        g_string_append(s, "opacity: 0.65; ");
+    switch (c->style) {
+        case STYLE_LCD:
+        case STYLE_BINARY:
+            g_string_append(s, "font-family: monospace; ");
+            if (c->sep_color && *c->sep_color)
+                g_string_append_printf(s, "color: %s; ", c->sep_color);
+            else if (c->time_color && *c->time_color)
+                g_string_append_printf(s, "color: %s; ", c->time_color);
+            break;
+        case STYLE_FUZZY:
+            g_string_append(s, "font-style: italic; ");
+            if (c->sep_color && *c->sep_color)
+                g_string_append_printf(s, "color: %s; ", c->sep_color);
+            else
+                g_string_append(s, "opacity: 0.75; ");
+            break;
+        case STYLE_ANALOG:
+            g_string_append(s, "font-family: serif; ");
+            if (c->sep_color && *c->sep_color)
+                g_string_append_printf(s, "color: %s; ", c->sep_color);
+            else
+                g_string_append(s, "opacity: 0.75; ");
+            break;
+        case STYLE_NIXIE:
+            g_string_append_printf(s, "font-family: monospace; color: %s; text-shadow: 0 0 5px %s; ",
+                (c->sep_color && *c->sep_color && g_strcmp0(c->sep_color, "#888888") != 0) ? c->sep_color : nixie_fg,
+                nixie_fg);
+            break;
+        case STYLE_DIGITAL:
+        default:
+            if (c->sep_color && *c->sep_color)
+                g_string_append_printf(s, "color: %s; ", c->sep_color);
+            else
+                g_string_append(s, "opacity: 0.65; ");
+            break;
+    }
     g_string_append(s, "}\n");
 
     g_string_append(s,
@@ -832,8 +959,22 @@ void clock_update_now(ClockPlugin *c) {
     }
 
     if (c->date_label) {
-        g_autofree gchar *d = g_date_time_format(now, (c->date_format && *c->date_format) ? c->date_format : "%a, %b %d");
-        const char *str = d ? d : "ERR";
+        char fuzzy_date[96];
+        g_autofree gchar *d = NULL;
+        g_autofree gchar *upper = NULL;
+        const char *str = "";
+
+        if (c->style == STYLE_FUZZY) {
+            format_fuzzy_date(now, c->fuzzy_level, fuzzy_date, sizeof(fuzzy_date));
+            str = fuzzy_date;
+        } else {
+            d = g_date_time_format(now, (c->date_format && *c->date_format) ? c->date_format : "%a, %b %d");
+            str = d ? d : "ERR";
+            if (c->style == STYLE_LCD || c->style == STYLE_BINARY) {
+                upper = g_ascii_strup(str, -1);
+                str = upper;
+            }
+        }
         if (strcmp(str, c->disp_date) != 0) {
             g_strlcpy(c->disp_date, str, sizeof(c->disp_date));
             gtk_label_set_text(GTK_LABEL(c->date_label), str);
