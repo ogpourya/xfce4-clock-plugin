@@ -22,6 +22,12 @@ Customizable **Clock** plugin for **XFCE 4** with stacked or inline date/time la
 - **Roman Numerals** — Classical Roman numerals (`XXIII:XLV`, `XVII · XI · MMXXVI`).
 - **Neon Glow** — Dual-layer futuristic neon text glow.
 
+## Screenshots
+
+| Layout & Format | Style | Colors |
+| --- | --- | --- |
+| ![Layout & Format](screenshots/1.png) | ![Style](screenshots/2.png) | ![Colors](screenshots/3.png) |
+
 ## Install
 
 ```bash
