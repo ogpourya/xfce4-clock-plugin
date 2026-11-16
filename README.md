@@ -2,23 +2,22 @@
 
 # xfce4-clock-plugin
 
-Zero-jitter digital **Clock** plugin for **XFCE 4** with stacked or inline layouts, visual styles, and an interactive calendar popover.
+Customizable **Clock** plugin for **XFCE 4** with stacked or inline date/time layouts, 6 distinct visual clock styles, and an interactive calendar popup.
 
 </div>
 
 ---
 
-## Highlights
+## Visual Styles
 
-- **6 Layout Modes** — `Time Only`, `Date Only`, `Stacked (Time / Date)`, `Stacked (Date / Time)`, `Inline (Time · Date)`, and `Inline (Date · Time)`.
-- **5 Visual Styles** — `Minimal`, `Pill Badge`, `Accent Split`, `Card Outline`, and `Monospace`, plus per-element font size, weight, padding, radius, and colors.
-- **Zero-Jitter Tabular Numerals** — `tabular-nums` alignment and second-boundary timer sync prevent neighboring panel items from shifting.
-- **Built-in Calendar Popover** — Left-click opens a clean calendar popup with week numbers and a **Today** button (or runs a custom command).
-- **Thread-Safe Timezones** — Uses GLib `GTimeZone` (e.g. `Asia/Tehran`, `UTC`, or system local) with live `strftime` format previews.
+- **Digital** — Crisp tabular-numeral digital readout.
+- **LCD (7-Segment)** — Vector 7-segment display with unlit ghost segments and glowing colons.
+- **Fuzzy** — Conversational human-time wording (`5 minutes`, `15 minutes`, or `Part of day`).
+- **Analog** — Live circular watch dial with hour, minute, and second hands.
+- **Binary (BCD)** — Binary-Coded Decimal LED dot matrix.
+- **Nixie Tube** — Retro glowing vacuum-tube digit capsules.
 
 ## Install
-
-Requires `gtk3`, `xfce4-panel`, `libxfce4ui`, and `libxfce4util`.
 
 ```bash
 cd ~/Downloads/xfce4-clock-plugin

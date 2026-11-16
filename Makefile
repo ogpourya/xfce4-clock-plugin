@@ -1,6 +1,6 @@
 CC      ?= gcc
 CFLAGS  += -O3 -march=native -flto -Wall -Wextra -Werror -fPIC $(shell pkg-config --cflags gtk+-3.0 libxfce4panel-2.0 libxfce4util-1.0 libxfce4ui-2)
-LDFLAGS += -shared -flto -Wl,-O1,--as-needed $(shell pkg-config --libs gtk+-3.0 libxfce4panel-2.0 libxfce4util-1.0 libxfce4ui-2)
+LDFLAGS += -shared -flto -Wl,-O1,--as-needed -lm $(shell pkg-config --libs gtk+-3.0 libxfce4panel-2.0 libxfce4util-1.0 libxfce4ui-2)
 
 SRCS        = clock.c prefs.c
 HDRS        = clock.h

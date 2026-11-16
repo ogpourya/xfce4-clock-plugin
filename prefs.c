@@ -21,19 +21,16 @@ typedef struct {
     GtkWidget *cb_tooltip;
     GtkWidget *entry_tooltip;
 
-    /* Tab 2: Style & Fonts */
+    /* Tab 2: Style */
     GtkWidget *combo_style;
+    GtkWidget *lbl_fuzzy;
+    GtkWidget *combo_fuzzy;
     GtkWidget *spin_time_size;
-    GtkWidget *combo_time_weight;
+    GtkWidget *cb_time_bold;
     GtkWidget *spin_date_size;
-    GtkWidget *combo_date_weight;
+    GtkWidget *cb_date_bold;
     GtkWidget *spin_spacing;
-    GtkWidget *spin_pad_x;
-    GtkWidget *spin_pad_y;
-    GtkWidget *spin_radius;
     GtkWidget *cb_icon;
-    GtkWidget *entry_icon;
-    GtkWidget *spin_icon_size;
 
     /* Tab 3: Colors */
     GtkWidget *col_time;
@@ -90,22 +87,27 @@ static gchar *get_color_btn_hex(GtkColorButton *btn) {
 
 static void refresh_sensitivity_and_previews(PrefsUI *ui) {
     ClockPlugin *c = ui->c;
+    gboolean has_t = clock_has_time(c->layout);
+    gboolean has_d = clock_has_date(c->layout);
+    gboolean is_fuzzy = (c->style == STYLE_FUZZY);
+    gboolean is_text_time = (c->style == STYLE_DIGITAL || c->style == STYLE_FUZZY);
 
     gtk_widget_set_sensitive(ui->entry_sep, clock_is_inline(c->layout));
-    gtk_widget_set_sensitive(ui->entry_time_fmt, clock_has_time(c->layout));
-    gtk_widget_set_sensitive(ui->combo_time_preset, clock_has_time(c->layout));
-    gtk_widget_set_sensitive(ui->spin_time_size, clock_has_time(c->layout));
-    gtk_widget_set_sensitive(ui->combo_time_weight, clock_has_time(c->layout));
+    gtk_widget_set_sensitive(ui->entry_time_fmt, has_t && !is_fuzzy);
+    gtk_widget_set_sensitive(ui->combo_time_preset, has_t && !is_fuzzy);
 
-    gtk_widget_set_sensitive(ui->entry_date_fmt, clock_has_date(c->layout));
-    gtk_widget_set_sensitive(ui->combo_date_preset, clock_has_date(c->layout));
-    gtk_widget_set_sensitive(ui->spin_date_size, clock_has_date(c->layout));
-    gtk_widget_set_sensitive(ui->combo_date_weight, clock_has_date(c->layout));
+    gtk_widget_set_sensitive(ui->spin_time_size, has_t);
+    gtk_widget_set_sensitive(ui->cb_time_bold, has_t && is_text_time);
+
+    gtk_widget_set_visible(ui->lbl_fuzzy, has_t && is_fuzzy);
+    gtk_widget_set_visible(ui->combo_fuzzy, has_t && is_fuzzy);
+
+    gtk_widget_set_sensitive(ui->entry_date_fmt, has_d);
+    gtk_widget_set_sensitive(ui->combo_date_preset, has_d);
+    gtk_widget_set_sensitive(ui->spin_date_size, has_d);
+    gtk_widget_set_sensitive(ui->cb_date_bold, has_d);
 
     gtk_widget_set_sensitive(ui->entry_tooltip, c->show_tooltip);
-
-    gtk_widget_set_sensitive(ui->entry_icon, c->show_icon);
-    gtk_widget_set_sensitive(ui->spin_icon_size, c->show_icon);
 
     g_autofree gchar *tp = clock_format_preview(c, c->time_format);
     g_autofree gchar *dp = clock_format_preview(c, c->date_format);
@@ -126,8 +128,9 @@ static void on_prefs_changed(GtkWidget *w, gpointer user_data) {
     if (ui->updating) return;
     ClockPlugin *c = ui->c;
 
-    c->layout = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_layout)), 0, LAYOUT_COUNT - 1);
-    c->style  = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_style)), 0, STYLE_COUNT - 1);
+    c->layout      = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_layout)), 0, LAYOUT_COUNT - 1);
+    c->style       = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_style)), 0, STYLE_COUNT - 1);
+    c->fuzzy_level = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_fuzzy)), 0, FUZZY_COUNT - 1);
 
     g_free(c->separator);
     c->separator = g_strdup(gtk_entry_get_text(GTK_ENTRY(ui->entry_sep)));
@@ -149,20 +152,12 @@ static void on_prefs_changed(GtkWidget *w, gpointer user_data) {
     g_free(c->tooltip_format);
     c->tooltip_format = g_strdup(gtk_entry_get_text(GTK_ENTRY(ui->entry_tooltip)));
 
-    c->time_size   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_time_size));
-    c->time_weight = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_time_weight)), 0, WEIGHT_COUNT - 1);
-    c->date_size   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_date_size));
-    c->date_weight = CLAMP(gtk_combo_box_get_active(GTK_COMBO_BOX(ui->combo_date_weight)), 0, WEIGHT_COUNT - 1);
-
-    c->spacing = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_spacing));
-    c->pad_x   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_pad_x));
-    c->pad_y   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_pad_y));
-    c->radius  = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_radius));
-
+    c->time_size = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_time_size));
+    c->time_bold = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ui->cb_time_bold));
+    c->date_size = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_date_size));
+    c->date_bold = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ui->cb_date_bold));
+    c->spacing   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_spacing));
     c->show_icon = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ui->cb_icon));
-    g_free(c->icon_name);
-    c->icon_name = g_strdup(gtk_entry_get_text(GTK_ENTRY(ui->entry_icon)));
-    c->icon_size = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ui->spin_icon_size));
 
     g_free(c->time_color);   c->time_color   = get_color_btn_hex(GTK_COLOR_BUTTON(ui->col_time));
     g_free(c->date_color);   c->date_color   = get_color_btn_hex(GTK_COLOR_BUTTON(ui->col_date));
@@ -267,7 +262,7 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
         GTK_DIALOG_DESTROY_WITH_PARENT,
         "window-close-symbolic", "_Close", GTK_RESPONSE_OK,
         NULL);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 450, -1);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 440, -1);
     c->prefs_dlg = dlg;
 
     PrefsUI *ui = g_new0(PrefsUI, 1);
@@ -360,7 +355,7 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
 
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), g1, gtk_label_new("Layout & Format"));
 
-    /* ==================== Tab 2: Style & Fonts ==================== */
+    /* ==================== Tab 2: Style ==================== */
     GtkWidget *g2 = new_grid();
     r = 0;
 
@@ -372,68 +367,47 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     gtk_grid_attach(GTK_GRID(g2), ui->combo_style, 1, r++, 2, 1);
     g_signal_connect(ui->combo_style, "changed", G_CALLBACK(on_prefs_changed), ui);
 
+    ui->lbl_fuzzy = make_row_label("Fuzzy precision:");
+    ui->combo_fuzzy = gtk_combo_box_text_new();
+    for (int i = 0; i < FUZZY_COUNT; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_fuzzy), FUZZY_NAMES[i]);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_fuzzy), c->fuzzy_level);
+    gtk_grid_attach(GTK_GRID(g2), ui->lbl_fuzzy, 0, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->combo_fuzzy, 1, r++, 2, 1);
+    g_signal_connect(ui->combo_fuzzy, "changed", G_CALLBACK(on_prefs_changed), ui);
+
     ui->spin_time_size = gtk_spin_button_new_with_range(7, 36, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_time_size), c->time_size);
-    ui->combo_time_weight = gtk_combo_box_text_new();
-    for (int i = 0; i < WEIGHT_COUNT; i++)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_time_weight), WEIGHT_NAMES[i]);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_time_weight), c->time_weight);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Time font (px / weight):"), 0, r, 1, 1);
+    ui->cb_time_bold = gtk_check_button_new_with_label("Bold");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_time_bold), c->time_bold);
+    gtk_grid_attach(GTK_GRID(g2), make_row_label("Time size (px):"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->spin_time_size, 1, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->combo_time_weight, 2, r++, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->cb_time_bold, 2, r++, 1, 1);
     g_signal_connect(ui->spin_time_size, "value-changed", G_CALLBACK(on_prefs_changed), ui);
-    g_signal_connect(ui->combo_time_weight, "changed", G_CALLBACK(on_prefs_changed), ui);
+    g_signal_connect(ui->cb_time_bold, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
     ui->spin_date_size = gtk_spin_button_new_with_range(6, 28, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_date_size), c->date_size);
-    ui->combo_date_weight = gtk_combo_box_text_new();
-    for (int i = 0; i < WEIGHT_COUNT; i++)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui->combo_date_weight), WEIGHT_NAMES[i]);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(ui->combo_date_weight), c->date_weight);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Date font (px / weight):"), 0, r, 1, 1);
+    ui->cb_date_bold = gtk_check_button_new_with_label("Bold");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_date_bold), c->date_bold);
+    gtk_grid_attach(GTK_GRID(g2), make_row_label("Date size (px):"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->spin_date_size, 1, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->combo_date_weight, 2, r++, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->cb_date_bold, 2, r++, 1, 1);
     g_signal_connect(ui->spin_date_size, "value-changed", G_CALLBACK(on_prefs_changed), ui);
-    g_signal_connect(ui->combo_date_weight, "changed", G_CALLBACK(on_prefs_changed), ui);
+    g_signal_connect(ui->cb_date_bold, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
     ui->spin_spacing = gtk_spin_button_new_with_range(0, 20, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_spacing), c->spacing);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Row / item spacing (px):"), 0, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(g2), make_row_label("Spacing (px):"), 0, r, 1, 1);
     gtk_grid_attach(GTK_GRID(g2), ui->spin_spacing, 1, r++, 1, 1);
     g_signal_connect(ui->spin_spacing, "value-changed", G_CALLBACK(on_prefs_changed), ui);
 
-    ui->spin_pad_x = gtk_spin_button_new_with_range(0, 24, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_pad_x), c->pad_x);
-    ui->spin_pad_y = gtk_spin_button_new_with_range(0, 16, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_pad_y), c->pad_y);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Padding H / V (px):"), 0, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->spin_pad_x, 1, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->spin_pad_y, 2, r++, 1, 1);
-    g_signal_connect(ui->spin_pad_x, "value-changed", G_CALLBACK(on_prefs_changed), ui);
-    g_signal_connect(ui->spin_pad_y, "value-changed", G_CALLBACK(on_prefs_changed), ui);
-
-    ui->spin_radius = gtk_spin_button_new_with_range(0, 24, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_radius), c->radius);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Corner radius (px):"), 0, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->spin_radius, 1, r++, 1, 1);
-    g_signal_connect(ui->spin_radius, "value-changed", G_CALLBACK(on_prefs_changed), ui);
-
     ui->cb_icon = gtk_check_button_new_with_label("Show clock icon");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui->cb_icon), c->show_icon);
-    gtk_grid_attach(GTK_GRID(g2), ui->cb_icon, 0, r++, 2, 1);
+    gtk_grid_attach(GTK_GRID(g2), ui->cb_icon, 0, r++, 3, 1);
     g_signal_connect(ui->cb_icon, "toggled", G_CALLBACK(on_prefs_changed), ui);
 
-    ui->entry_icon = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(ui->entry_icon), c->icon_name);
-    ui->spin_icon_size = gtk_spin_button_new_with_range(8, 32, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->spin_icon_size), c->icon_size);
-    gtk_grid_attach(GTK_GRID(g2), make_row_label("Icon name / size (px):"), 0, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->entry_icon, 1, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g2), ui->spin_icon_size, 2, r++, 1, 1);
-    g_signal_connect(ui->entry_icon, "changed", G_CALLBACK(on_prefs_changed), ui);
-    g_signal_connect(ui->spin_icon_size, "value-changed", G_CALLBACK(on_prefs_changed), ui);
-
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), g2, gtk_label_new("Style & Fonts"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), g2, gtk_label_new("Style"));
 
     /* ==================== Tab 3: Colors ==================== */
     GtkWidget *g3 = new_grid();
@@ -443,14 +417,14 @@ void prefs_open_dialog(XfcePanelPlugin *plugin, gpointer user_data) {
     ui->col_date   = make_color_row(ui, GTK_GRID(g3), r++, "Date color:", c->date_color);
     ui->col_sep    = make_color_row(ui, GTK_GRID(g3), r++, "Separator color:", c->sep_color);
     ui->col_bg     = make_color_row(ui, GTK_GRID(g3), r++, "Background fill:", c->bg_color);
-    ui->col_accent = make_color_row(ui, GTK_GRID(g3), r++, "Border / accent:", c->accent_color);
+    ui->col_accent = make_color_row(ui, GTK_GRID(g3), r++, "Second hand / accent:", c->accent_color);
 
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), g3, gtk_label_new("Colors"));
 
     ui->updating = FALSE;
+    gtk_widget_show_all(dlg);
     refresh_sensitivity_and_previews(ui);
 
     g_signal_connect(dlg, "response", G_CALLBACK(gtk_widget_destroy), NULL);
     g_signal_connect(dlg, "destroy", G_CALLBACK(on_prefs_destroy), ui);
-    gtk_widget_show_all(dlg);
 }
